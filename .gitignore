@@ -1,0 +1,33 @@
+# 依赖
+node_modules/
+
+# Web 构建产物（cap sync 会把它复制进两个原生工程，原生工程各自的 .gitignore 已忽略）
+dist/
+
+# 出包产物 / 中间文件
+build-artifacts/
+*.apk
+*.aab
+*.ipa
+*.xcarchive
+*.dSYM.zip
+*.dSYM
+
+# 签名材料，绝不入库
+*.keystore
+*.jks
+*.p12
+*.mobileprovision
+*.p8
+AuthKey*.p8
+
+# 本地配置
+.env
+.env.*
+local.properties
+
+# 编辑器 / 系统
+.DS_Store
+.idea/
+.vscode/
+*.log

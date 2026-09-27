@@ -1,0 +1,50 @@
+{
+    "name": "musicfree-pad",
+    "version": "1.0.0",
+    "private": true,
+    "type": "module",
+    "description": "MusicFree Pad 版 - 运行在 iPad / Android 平板等大屏移动设备上的音乐播放器，核心功能与 MusicFreeDesktop 对齐，数据/插件互通",
+    "scripts": {
+        "dev": "vite --host",
+        "build": "tsc --noEmit && vite build",
+        "preview": "vite preview --host",
+        "gen:icons": "node scripts/gen-icon.mjs && npx capacitor-assets generate --android --ios --iconBackgroundColor '#27282c' --iconBackgroundColorDark '#27282c' --splashBackgroundColor '#151515' --splashBackgroundColorDark '#151515'",
+        "proxy": "node server/proxy.mjs",
+        "cap:sync": "npm run build && cap sync",
+        "open:ios": "cap open ios",
+        "open:android": "cap open android",
+        "ios:build": "npm run cap:sync && cd ios/App && xcodebuild -project App.xcodeproj -scheme App -configuration Debug -sdk iphonesimulator CODE_SIGNING_ALLOWED=NO -derivedDataPath /tmp/mfp-ios-dd build",
+        "ios:device": "npm run cap:sync && cd ios/App && xcodebuild -project App.xcodeproj -scheme App -configuration Debug -destination 'id=00008027-000D58E11184002E' -derivedDataPath /tmp/mfp-ios-dd -allowProvisioningUpdates build && xcrun devicectl device install app --device 00008027-000D58E11184002E /tmp/mfp-ios-dd/Build/Products/Debug-iphoneos/App.app && xcrun devicectl device process launch --device 00008027-000D58E11184002E com.huah.musicfree.pad"
+    },
+    "dependencies": {
+        "@capacitor/android": "^8.5.2",
+        "@capacitor/core": "^8.5.2",
+        "@capacitor/ios": "^8.5.2",
+        "@capacitor/status-bar": "^8.0.3",
+        "axios": "^1.7.9",
+        "big-integer": "^1.6.52",
+        "cheerio": "^1.0.0",
+        "compare-versions": "^6.1.1",
+        "crypto-js": "^4.2.0",
+        "dayjs": "^1.11.13",
+        "eventemitter3": "^5.0.1",
+        "he": "^1.2.0",
+        "jotai": "^2.10.3",
+        "nanoid": "^5.0.9",
+        "qs": "^6.13.0",
+        "react": "18.3.1",
+        "react-dom": "18.3.1"
+    },
+    "devDependencies": {
+        "@capacitor/assets": "^3.0.5",
+        "@capacitor/cli": "^8.5.2",
+        "@types/crypto-js": "^4.2.2",
+        "@types/he": "^1.2.3",
+        "@types/qs": "^6.9.15",
+        "@types/react": "^18.3.12",
+        "@types/react-dom": "^18.3.1",
+        "@vitejs/plugin-react": "^4.3.4",
+        "typescript": "^5.6.3",
+        "vite": "^6.0.3"
+    }
+}
