@@ -1,6 +1,6 @@
 # MusicFree Pad
 
-运行在 iPad / Android 平板等大屏移动设备上的音乐播放器（Web + Capacitor 原生壳）。核心功能与 [MusicFreeDesktop](../MusicFreeDesktop) 对齐，**音源插件与备份数据双向互通**。布局参考网易云音乐 Pad 版，自动适配横屏 / 竖屏。
+运行在 iPad / Android 平板等大屏移动设备上的音乐播放器（Web + Capacitor 原生壳）。核心功能与 [MusicFreeDesktop](https://github.com/dastuer/MusicFreeDesktop) 对齐，**音源插件与备份数据双向互通**。布局参考网易云音乐 Pad 版，自动适配横屏 / 竖屏。
 
 ![tech](https://img.shields.io/badge/React_18-Vite_6-TypeScript-blue) ![pwa](https://img.shields.io/badge/PWA-iPad_Safari-ec4141)
 
@@ -67,8 +67,20 @@ npm run open:ios       # Xcode 打开（macOS）
 - **Android 出包**：`npm run open:android` 后在 Android Studio 里 `Build > Build APK(s)`（调试包）或生成签名 Bundle（上架）。
 - **本机命令行出包（已配好，可直接用）**：SDK 在 `~/Library/Android/sdk`（已装 platform-36 / build-tools 35+36 / platform-tools，`android/local.properties` 已指向），构建 `cd android && ./gradlew assembleDebug`，产物在 `android/app/build/outputs/apk/debug/app-debug.apk`。装机：`adb install -r android/app/build/outputs/apk/debug/app-debug.apk`，或把 APK 发到设备上直接安装。
 - 上架用签名包：在 `android/app/build.gradle` 配好 signingConfig 后跑 `./gradlew assembleRelease`（或 bundleRelease 出 AAB）。
-- **iOS 出包**：`npm run open:ios`，选择目标设备直接 Run 到真机 / 模拟器；上架需在 Xcode 里配置签名团队。
-- 命令行验证 iOS 构建是否通过：`npm run ios:build`（模拟器 SDK，无需签名）。
+- **iOS 出包**：`npm run open:ios`，选择目标设备直接 Run 到真机 / 模拟器；命令行验证能否编过：`npm run ios:build`（模拟器 SDK，无需签名）。
+- **iOS 开发签名 IPA（命令行，v1.0.0 即用此法）**：
+
+```bash
+xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Release \
+  -destination 'generic/platform=iOS' \
+  -archivePath /tmp/mfp-archive/MusicFreePad.xcarchive -allowProvisioningUpdates archive
+xcodebuild -exportArchive -archivePath /tmp/mfp-archive/MusicFreePad.xcarchive \
+  -exportPath /tmp/mfp-ipa \
+  -exportOptionsPlist ios/export-options-development.plist -allowProvisioningUpdates
+```
+
+  签名配置见 `ios/export-options-development.plist`（`method=development` + 自动签名，team `W6L82BPQT7`）。**这类包只能装在描述文件里已注册的设备上**（当前就一台：UDID `00008027-000D58E11184002E` 的 iPad Pro），且要用 Xcode / Apple Configurator / `xcrun devicectl device install app` 安装，不能像 APK 那样点文件直接装。本机只有 Apple Development 证书，没有 Distribution 证书，所以出不了 TestFlight / App Store 包。
+- 装到已连接的 iPad：`npm run ios:device`（构建 + 安装 + 启动一条龙）。
 
 ## 插件兼容性
 
@@ -89,7 +101,7 @@ npm run open:ios       # Xcode 打开（macOS）
 | 播放队列 / 偏好 | `localStorage`（playList、volume、theme、pageSource.* 等） | 与桌面端备份的 `preferences` 白名单一致 |
 | 备份文件 | `format: "musicfree-desktop"`, `version: 1` | 桌面端导出的备份可直接导入 Pad，反之亦然 |
 
-差异说明：最近播放不参与备份（与桌面端一致）；本地音乐（localMusic）Pad 端不支持，恢复时自动跳过并提示；WebDAV 备份通道暂未实现，可先用「导出文件 / 导入文件」。
+差异说明：最近播放不参与备份（与桌面端一致）；本地音乐（localMusic）Pad 端不支持，恢复时自动跳过并提示。WebDAV 通道已实现，但浏览器形态要求服务端允许跨域（Nextcloud / Alist 大多支持），否则请配伴生代理或直接用原生 App；密码只存本机，不进备份文件。
 
 ## 目录结构
 
@@ -111,5 +123,6 @@ scripts/gen-icon.mjs # PWA 图标生成（纯 Node）
 
 ## 后续可扩展
 
-- Capacitor 打包成原生 iOS App（绕过 CORS 的原生网络层 + 真后台播放 + 音频焦点）
-- WebDAV 备份通道、歌词翻译显示、均衡器
+- 歌词翻译显示、均衡器、音频焦点抢占细节
+- 真正的分发渠道：iOS 上架（需 Apple Distribution 证书 + App Store Connect）、Android 签名 AAB 上架 Google Play
+
