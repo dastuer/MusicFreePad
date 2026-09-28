@@ -1039,6 +1039,19 @@ code {
     }
 }
 
+/* 音质后台缓冲中：当前播的不中断，只是新档位还没接上手 */
+.quality-badge.switching {
+    color: var(--primary-color);
+    border-color: var(--primary-color);
+    animation: quality-switch 1s ease-in-out infinite;
+}
+
+@keyframes quality-switch {
+    50% {
+        opacity: 0.4;
+    }
+}
+
 .quality-menu {
     position: absolute;
     bottom: calc(100% + 10px);

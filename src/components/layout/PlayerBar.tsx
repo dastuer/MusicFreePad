@@ -8,8 +8,10 @@ import {
     useRepeatMode,
     useQuality,
     usePlayingQuality,
+    useQualitySwitching,
     applyQuality,
 } from "@/core/trackPlayer";
+import type { IQualitySwitchResult } from "@/core/trackPlayer";
 import { toggleLike, isLikedMusic, likesVersionAtom } from "@/core/musicSheet";
 import { nowPlayingOpenAtom, queueOpenAtom, showToast } from "@/core/uiAtoms";
 import { formatSeconds } from "@/core/utils";
@@ -34,6 +36,23 @@ export const QUALITY_LABEL: Record<IMusic.IQualityKey, string> = {
     super: "无损",
 };
 
+/** 音质切换结果 → 提示语（"cancelled" 时返回空串，不提示） */
+export function qualitySwitchToast(
+    res: IQualitySwitchResult,
+    requested: IMusic.IQualityKey,
+): string {
+    if (res.status === "switched") {
+        return `音质已切换为${QUALITY_LABEL[res.quality ?? requested]}`;
+    }
+    if (res.status === "queued") {
+        return `音质已设为${QUALITY_LABEL[requested]}，下一次播放时生效`;
+    }
+    if (res.status === "failed") {
+        return `切换到${QUALITY_LABEL[requested]}失败：${res.reason ?? "未知原因"}，继续用当前音质播放`;
+    }
+    return "";
+}
+
 /** 底部播放条（网易云 Pad 风）：封面 | 播放控制 | 歌名+进度条+进度 | 红心/音质/循环/队列 */
 export default function PlayerBar() {
     const currentMusic = useCurrentMusic();
@@ -42,6 +61,7 @@ export default function PlayerBar() {
     const repeatMode = useRepeatMode();
     const quality = useQuality();
     const playingQuality = usePlayingQuality();
+    const switchingQuality = useQualitySwitching();
     const likesVersion = useAtomValue(likesVersionAtom);
     const setNowPlayingOpen = useSetAtom(nowPlayingOpenAtom);
     const setQueueOpen = useSetAtom(queueOpenAtom);
@@ -117,8 +137,9 @@ export default function PlayerBar() {
                     </button>
                     <div className="quality-wrap">
                         <button
-                            className="quality-badge"
+                            className={`quality-badge ${switchingQuality ? "switching" : ""}`}
                             onClick={() => setQualityMenuOpen((v) => !v)}
+                            title={switchingQuality ? "正在缓冲新音质，当前播放不中断" : "音质"}
                         >
                             {QUALITY_LABEL[shownQuality]}
                         </button>
@@ -130,9 +151,15 @@ export default function PlayerBar() {
                                         className={`quality-item ${q === quality ? "selected" : ""}`}
                                         onClick={async () => {
                                             setQualityMenuOpen(false);
-                                            if (q !== quality) {
-                                                await applyQuality(q);
-                                                showToast(`音质已切换为${QUALITY_LABEL[q]}`);
+                                            if (q === quality) {
+                                                return;
+                                            }
+                                            const msg = qualitySwitchToast(
+                                                await applyQuality(q),
+                                                q,
+                                            );
+                                            if (msg) {
+                                                showToast(msg);
                                             }
                                         }}
                                     >

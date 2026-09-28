@@ -9,6 +9,7 @@ import {
     useVolume,
     useQuality,
     usePlayingQuality,
+    useQualitySwitching,
     applyQuality,
     useCurrentLyric,
     loadCurrentLyric,
@@ -22,7 +23,7 @@ import { formatSeconds } from "@/core/utils";
 import Cover from "@/components/base/Cover";
 import Slider from "@/components/base/Slider";
 import VSlider from "@/components/base/VSlider";
-import { QUALITY_LABEL } from "@/components/layout/PlayerBar";
+import { QUALITY_LABEL, qualitySwitchToast } from "@/components/layout/PlayerBar";
 import {
     IconChevronDown,
     IconPlay,
@@ -55,6 +56,7 @@ export default function NowPlaying() {
     const volume = useVolume();
     const quality = useQuality();
     const playingQuality = usePlayingQuality();
+    const switchingQuality = useQualitySwitching();
     const lyric = useAtomValue(currentLyricAtom);
     const likesVersion = useAtomValue(likesVersionAtom);
     const setQueueOpen = useSetAtom(queueOpenAtom);
@@ -307,8 +309,11 @@ export default function NowPlaying() {
                             </button>
                             <div className="quality-wrap">
                                 <button
-                                    className="quality-badge np-quality-badge"
+                                    className={`quality-badge np-quality-badge ${
+                                        switchingQuality ? "switching" : ""
+                                    }`}
                                     onClick={() => setQualityMenuOpen((v) => !v)}
+                                    title={switchingQuality ? "正在缓冲新音质，当前播放不中断" : "音质"}
                                 >
                                     {QUALITY_LABEL[shownQuality]}
                                 </button>
@@ -320,9 +325,15 @@ export default function NowPlaying() {
                                                 className={`quality-item ${q === quality ? "selected" : ""}`}
                                                 onClick={async () => {
                                                     setQualityMenuOpen(false);
-                                                    if (q !== quality) {
-                                                        await applyQuality(q);
-                                                        showToast(`音质已切换为${QUALITY_LABEL[q]}`);
+                                                    if (q === quality) {
+                                                        return;
+                                                    }
+                                                    const msg = qualitySwitchToast(
+                                                        await applyQuality(q),
+                                                        q,
+                                                    );
+                                                    if (msg) {
+                                                        showToast(msg);
                                                     }
                                                 }}
                                             >

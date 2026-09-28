@@ -31,6 +31,14 @@ export interface IPlayFailurePayload {
     downgradedTo?: IMusic.IQualityKey;
 }
 
+/** `applyQuality` 的结果：UI 按它决定提示语 */
+export interface IQualitySwitchResult {
+    status: "switched" | "queued" | "cancelled" | "failed";
+    /** 实际生效的音质（插件没有对应档位时会是降到的那一档） */
+    quality?: IMusic.IQualityKey;
+    reason?: string;
+}
+
 /**
  * 单次 getMediaSource 的最长等待。
  * 换歌时旧歌已经被停掉，等待期是静音的，所以不能让一个卡死的音源拖满 pluginCall 的 30s。
@@ -107,6 +115,39 @@ function describePlayError(e: any) {
 /** 音质档位从低到高：对齐与降级都按这个顺序 */
 const QUALITY_LADDER: IMusic.IQualityKey[] = ["low", "standard", "high", "super"];
 
+/** ---------- 无缝切音质（后台预取 + 交接） ---------- */
+
+/** 新音源至少要缓冲到「当前播放位置之后多少秒」才允许交接 */
+const SEAMLESS_LEAD = 1.5;
+
+/** 预取总超时：到点还没缓冲好就放弃，继续用当前音质播（不让切换把播放拖停） */
+const SEAMLESS_TIMEOUT = 20000;
+
+/** 预取状态轮询间隔 */
+const SEAMLESS_POLL = 250;
+
+/** 两次推送预取位置的最小间隔，避免播放头追着缓冲一路 seek */
+const SEAMLESS_RESEEK_GAP = 1500;
+
+/**
+ * 预取迟迟没有数据时，让预取播放器以静音方式先跑起来催它取流。
+ * iOS/Safari 会无视未开播元素的 preload，光等就永远缓冲不出来。
+ */
+const SEAMLESS_KICK_DELAY = 3000;
+
+/** `position` 之后连续可播的缓冲末端；没落进缓冲区间返回 0 */
+function bufferedEndAfter(audio: HTMLAudioElement, position: number): number {
+    const ranges = audio.buffered;
+    let end = 0;
+    for (let i = 0; i < ranges.length; i++) {
+        // 允许 0.25s 的小空隙，避免为了尾数一直不交接
+        if (ranges.start(i) <= position + 0.25 && ranges.end(i) > end) {
+            end = ranges.end(i);
+        }
+    }
+    return end;
+}
+
 /**
  * 条目声明了可用音质（`qualities`）时对齐请求档（与桌面端同规则）。
  */
@@ -160,6 +201,8 @@ export const rateAtom = atom<number>(1);
 export const volumeAtom = atom<number>(getStoredVolume());
 export const qualityAtom = atom<IMusic.IQualityKey>(getQuality());
 export const playingQualityAtom = atom<IMusic.IQualityKey | null>(null);
+/** 正在无缝切换到哪个音质（null = 没有切换在途） */
+export const qualitySwitchingAtom = atom<IMusic.IQualityKey | null>(null);
 export const playListAddedAtom = atom(0);
 
 const store = getDefaultStore();
@@ -243,6 +286,10 @@ class TrackPlayer extends EventEmitter {
     private resolvedSourceUrl: string | null = null;
     private qualityRetrying = false;
     private qualityRetryCount = 0;
+    /** 无缝切音质时后台缓冲用的临时播放器，交接后变成主播放器 */
+    private probeAudio: HTMLAudioElement | null = null;
+    /** 在途切换的序号：换歌 / 再次切换时用它作废旧预取 */
+    private qualitySwitchSeq = 0;
 
     setup() {
         if (this.audio) {
@@ -251,15 +298,7 @@ class TrackPlayer extends EventEmitter {
         const audio = new Audio();
         audio.preload = "auto";
         audio.volume = getStoredVolume();
-        audio.addEventListener("ended", this.onEnded);
-        audio.addEventListener("timeupdate", this.onProgress);
-        audio.addEventListener("loadedmetadata", this.onProgress);
-        audio.addEventListener("pause", this.onAudioPause);
-        audio.addEventListener("play", this.onAudioPlay);
-        audio.addEventListener("playing", this.onAudioPlaying);
-        audio.addEventListener("error", this.onAudioError);
-        audio.addEventListener("waiting", this.onAudioStall);
-        audio.addEventListener("stalled", this.onAudioStall);
+        this.attachAudioListeners(audio);
         this.audio = audio;
 
         // Pad 版：切后台 / 关页面前把「听到哪儿」写进 localStorage（桌面端是退出握手写 session.json）
@@ -272,6 +311,42 @@ class TrackPlayer extends EventEmitter {
         window.addEventListener("pagehide", persist);
 
         this.restoreSession();
+    }
+
+    private attachAudioListeners(audio: HTMLAudioElement) {
+        audio.addEventListener("ended", this.onEnded);
+        audio.addEventListener("timeupdate", this.onProgress);
+        audio.addEventListener("loadedmetadata", this.onProgress);
+        audio.addEventListener("pause", this.onAudioPause);
+        audio.addEventListener("play", this.onAudioPlay);
+        audio.addEventListener("playing", this.onAudioPlaying);
+        audio.addEventListener("error", this.onAudioError);
+        audio.addEventListener("waiting", this.onAudioStall);
+        audio.addEventListener("stalled", this.onAudioStall);
+    }
+
+    private detachAudioListeners(audio: HTMLAudioElement) {
+        audio.removeEventListener("ended", this.onEnded);
+        audio.removeEventListener("timeupdate", this.onProgress);
+        audio.removeEventListener("loadedmetadata", this.onProgress);
+        audio.removeEventListener("pause", this.onAudioPause);
+        audio.removeEventListener("play", this.onAudioPlay);
+        audio.removeEventListener("playing", this.onAudioPlaying);
+        audio.removeEventListener("error", this.onAudioError);
+        audio.removeEventListener("waiting", this.onAudioStall);
+        audio.removeEventListener("stalled", this.onAudioStall);
+    }
+
+    /** 彻底弃用一个播放器实例：摘掉监听，免得它的 pause/error 事件回头改状态 */
+    private destroyAudioElement(audio: HTMLAudioElement) {
+        this.detachAudioListeners(audio);
+        audio.pause();
+        audio.removeAttribute("src");
+        try {
+            audio.load();
+        } catch {
+            // ignore
+        }
     }
 
     /**
@@ -454,6 +529,7 @@ class TrackPlayer extends EventEmitter {
 
     /** 断掉当前音源并静音 */
     private detachAudio() {
+        this.abortQualitySwitch();
         this.clearStallWatch();
         this.clearPendingSeek();
         const audio = this.audio;
@@ -467,6 +543,16 @@ class TrackPlayer extends EventEmitter {
         } catch {
             // ignore
         }
+    }
+
+    /** 作废在途的音质预取（换歌、手动暂停、又点了一次切换都会走到这里） */
+    private abortQualitySwitch() {
+        this.qualitySwitchSeq += 1;
+        if (this.probeAudio) {
+            this.destroyAudioElement(this.probeAudio);
+            this.probeAudio = null;
+        }
+        setAtom(qualitySwitchingAtom, null);
     }
 
     private clearPendingSeek() {
@@ -1176,21 +1262,226 @@ class TrackPlayer extends EventEmitter {
         return this.audio?.volume ?? getStoredVolume();
     }
 
-    /** 切换音质：正在播就记住位置重新解析，暂停中只作废音源（下次播放用新音质） */
-    async applyQuality(quality: IMusic.IQualityKey) {
+    /**
+     * 无缝切换音质：当前音源照常播放，另开一个播放器在后台把目标音质缓冲到
+     * 「播放头之后 SEAMLESS_LEAD 秒」，够了才交接；解析或缓冲不给力就一直播旧的，
+     * 所以切音质不会产生静音间隙（代价是切换失败时保持原音质）。
+     */
+    private async switchQualitySeamless(
+        musicItem: IMusic.IMusicItem,
+        targetQuality: IMusic.IQualityKey,
+    ): Promise<IQualitySwitchResult> {
+        this.abortQualitySwitch();
+        const seq = ++this.qualitySwitchSeq;
+        const isStale = () => seq !== this.qualitySwitchSeq;
+        const livePosition = () => this.audio?.currentTime ?? 0;
+        let probe: HTMLAudioElement | null = null;
+        let committed = false;
+        setAtom(qualitySwitchingAtom, targetQuality);
+
+        try {
+            // excludeUrl：插件常拿同一个直链糊弄不同音质，换个 URL 才算真换
+            const resolved = await this.resolveMediaUrl(
+                musicItem,
+                targetQuality,
+                this.resolvedSourceUrl ?? undefined,
+            );
+            if (isStale()) {
+                return { status: "cancelled" };
+            }
+            if (!resolved) {
+                return { status: "failed", reason: "这个音质没有独立音源" };
+            }
+
+            probe = new Audio();
+            probe.preload = "auto";
+            probe.playbackRate = this._rate;
+            this.probeAudio = probe;
+            probe.src = resolved.src;
+            await this.waitForProbeBuffered(probe, livePosition, isStale);
+            if (isStale()) {
+                return { status: "cancelled" };
+            }
+            const result = this.commitQualitySwitch(probe, resolved);
+            committed = true;
+            return result;
+        } catch (e: any) {
+            if (isStale()) {
+                return { status: "cancelled" };
+            }
+            console.warn(`[trackPlayer] 无缝切换 ${targetQuality} 失败:`, e?.message ?? e);
+            return { status: "failed", reason: e?.message ?? "新音源准备失败" };
+        } finally {
+            if (!isStale()) {
+                setAtom(qualitySwitchingAtom, null);
+            }
+            if (probe && !committed) {
+                if (this.probeAudio === probe) {
+                    this.probeAudio = null;
+                }
+                this.destroyAudioElement(probe);
+            }
+        }
+    }
+
+    /** 等预取播放器把播放头之后 SEAMLESS_LEAD 秒缓冲好（播放头会一直往前追） */
+    private waitForProbeBuffered(
+        probe: HTMLAudioElement,
+        livePosition: () => number,
+        isStale: () => boolean,
+    ): Promise<void> {
+        return new Promise((resolve, reject) => {
+            const startedAt = Date.now();
+            let settled = false;
+            let lastSeekAt = 0;
+            let kicked = false;
+            const cleanup = () => {
+                if (settled) {
+                    return;
+                }
+                settled = true;
+                clearInterval(timer);
+                probe.removeEventListener("progress", tick);
+                probe.removeEventListener("error", onError);
+            };
+            const onError = () => {
+                cleanup();
+                reject(new Error("新音源加载失败"));
+            };
+            /** 光靠 preload 拿不到数据（iOS 会等开播才取流）：静音跑起来催它下载 */
+            const kick = () => {
+                if (kicked || Date.now() - startedAt < SEAMLESS_KICK_DELAY) {
+                    return;
+                }
+                kicked = true;
+                probe.volume = 0;
+                probe.play().catch((e) => {
+                    console.warn("[trackPlayer] 预取播放器启动失败", e?.name ?? e);
+                });
+            };
+            const tick = () => {
+                if (settled) {
+                    return;
+                }
+                if (isStale()) {
+                    cleanup();
+                    reject(new Error("切换已取消"));
+                    return;
+                }
+                if (Date.now() - startedAt > SEAMLESS_TIMEOUT) {
+                    cleanup();
+                    reject(new Error("新音源缓冲超时"));
+                    return;
+                }
+                if (probe.readyState < 1) {
+                    kick();
+                    return;
+                }
+                const live = livePosition();
+                const bufferedEnd = bufferedEndAfter(probe, live);
+                if (probe.readyState >= 3 && bufferedEnd >= live + SEAMLESS_LEAD) {
+                    cleanup();
+                    resolve();
+                    return;
+                }
+                kick();
+                // 缓冲没盖住播放头：把预取位置推到当前位置，让浏览器从这儿取流
+                if (Date.now() - lastSeekAt > SEAMLESS_RESEEK_GAP) {
+                    lastSeekAt = Date.now();
+                    try {
+                        probe.currentTime = live;
+                    } catch {
+                        // ignore
+                    }
+                }
+            };
+            probe.addEventListener("progress", tick);
+            probe.addEventListener("error", onError);
+            const timer = setInterval(tick, SEAMLESS_POLL);
+            tick();
+        });
+    }
+
+    /**
+     * 交接：整个流程不 await，同步换掉主播放器，避免中途被换歌插队。
+     * 新实例已经缓冲过播放头位置，所以听起来只是同一个位置接着播。
+     */
+    private commitQualitySwitch(
+        probe: HTMLAudioElement,
+        resolved: {
+            src: string;
+            source?: IPlugin.IMediaSourceResult;
+            quality: IMusic.IQualityKey | null;
+        },
+    ): IQualitySwitchResult {
+        const old = this.audio;
+        const volume = old?.volume ?? getStoredVolume();
+        const position = old?.currentTime ?? 0;
+        const wasPlaying = !!old && !old.paused;
+
+        this.clearStallWatch();
+        this.clearPendingSeek();
+        this.probeAudio = null;
+        setAtom(qualitySwitchingAtom, null);
+        if (old) {
+            this.destroyAudioElement(old);
+        }
+
+        this.audio = probe;
+        this.attachAudioListeners(probe);
+        probe.volume = volume;
+        probe.muted = false;
+        probe.playbackRate = this._rate;
+        // 预取时被静音催起来过，这儿要么接着出声，要么就跟着旧的一起停住
+        if (!wasPlaying) {
+            probe.pause();
+        }
+        try {
+            probe.currentTime = position;
+        } catch {
+            // ignore
+        }
+        this.pendingStartPosition = 0;
+        this.stallNudges = 0;
+        this.resolvedQuality = resolved.quality;
+        this.resolvedSourceUrl = resolved.source?.url ?? null;
+        setAtom(playingQualityAtom, resolved.quality);
+        setAtom(progressAtom, {
+            position,
+            duration: probe.duration || this._currentMusic?.duration || 0,
+        });
+
+        if (wasPlaying) {
+            probe.play().catch((e) => {
+                console.warn("[trackPlayer] 切音质后起播失败", e?.name ?? e);
+                if (this.audio === probe) {
+                    setAtom(musicStateAtom, "paused");
+                }
+            });
+        } else {
+            setAtom(musicStateAtom, "paused");
+        }
+        return { status: "switched", quality: resolved.quality ?? getQuality() };
+    }
+
+    /**
+     * 切换音质。播放中走无缝交接；暂停中只作废音源（下次播放用新音质）；
+     * 本地文件没有多音质，只记下偏好。
+     */
+    async applyQuality(quality: IMusic.IQualityKey): Promise<IQualitySwitchResult> {
         setQuality(quality);
         setAtom(qualityAtom, quality);
         const music = this._currentMusic;
         const audio = this.audio;
         if (!music || music.localPath || !audio?.src) {
-            return;
+            return { status: "queued" };
         }
-        this.pendingStartPosition = audio.currentTime || 0;
         if (audio.paused) {
+            this.pendingStartPosition = audio.currentTime || 0;
             this.detachAudio();
-            return;
+            return { status: "queued" };
         }
-        await this.play(music, true);
+        return this.switchQualitySeamless(music, quality);
     }
 
     getProgress() {
@@ -1228,11 +1519,15 @@ export function useQuality() {
 export function usePlayingQuality() {
     return useAtomValue(playingQualityAtom);
 }
+/** 正在切换到哪个音质（null 表示没有切换在途） */
+export function useQualitySwitching() {
+    return useAtomValue(qualitySwitchingAtom);
+}
 export function setDefaultQuality(quality: IMusic.IQualityKey) {
     setQuality(quality);
     setAtom(qualityAtom, quality);
 }
-/** 播放栏即时切换音质：重解析当前歌曲（设置页改默认值用 setDefaultQuality） */
+/** 播放栏即时切换音质：后台缓冲目标音质，缓冲好了再无缝交接（设置页改默认值用 setDefaultQuality） */
 export function applyQuality(quality: IMusic.IQualityKey) {
     return TrackPlayerSingleton.applyQuality(quality);
 }
