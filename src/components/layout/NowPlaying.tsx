@@ -15,6 +15,7 @@ import {
     currentLyricAtom,
 } from "@/core/trackPlayer";
 import { nowPlayingOpenAtom, queueOpenAtom, openMusicActions, showToast } from "@/core/uiAtoms";
+import { useBackLayer } from "@/core/systemBack";
 import { toggleLike, isLikedMusic, likesVersionAtom } from "@/core/musicSheet";
 import { navigate } from "@/core/router";
 import { formatSeconds } from "@/core/utils";
@@ -67,6 +68,9 @@ export default function NowPlaying() {
     const [mounted, setMounted] = useState(false);
     const [revealed, setRevealed] = useState(false);
     void likesVersion;
+
+    // 系统返回（Android 返回键 / iOS 侧滑）先收起本页，而不是退出应用
+    useBackLayer(open, "nowplaying", () => setOpen(false));
 
     // 点弹层外任意位置收起音量弹层
     useEffect(() => {

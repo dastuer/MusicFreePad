@@ -14,6 +14,12 @@ const config: CapacitorConfig = {
         CapacitorHttp: {
             enabled: true,
         },
+        // Android 15+ 强制 edge-to-edge：系统栏透明、WebView 沉浸绘制到底，
+        // 栏区显示的就是页面/播放器自身的背景；DARK = 深色底浅色图标
+        SystemBars: {
+            style: "DARK",
+            initialViewportFitValueHint: "cover",
+        },
     },
 };
 

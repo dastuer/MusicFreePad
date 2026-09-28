@@ -1,12 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { useAtomValue } from "jotai";
 import { promptAtom, closePrompt } from "@/core/uiAtoms";
+import { useBackLayer } from "@/core/systemBack";
 
 /** 输入对话框（新建/重命名歌单等） */
 export default function PromptDialog() {
     const state = useAtomValue(promptAtom);
     const [value, setValue] = useState("");
     const inputRef = useRef<HTMLInputElement | null>(null);
+
+    // 系统返回等同于「取消」
+    useBackLayer(!!state, "prompt-dialog", closePrompt);
 
     useEffect(() => {
         if (state) {

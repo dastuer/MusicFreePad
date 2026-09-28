@@ -1,6 +1,7 @@
 import { useAtomValue, useSetAtom } from "jotai";
 import { TrackPlayerSingleton, useCurrentMusic, usePlayList } from "@/core/trackPlayer";
 import { queueOpenAtom, showToast } from "@/core/uiAtoms";
+import { useBackLayer } from "@/core/systemBack";
 import Cover from "@/components/base/Cover";
 import { IconClose, IconTrash, IconPlaying } from "@/components/base/Icons";
 
@@ -10,6 +11,9 @@ export default function PlayQueuePanel() {
     const setOpen = useSetAtom(queueOpenAtom);
     const playList = usePlayList();
     const currentMusic = useCurrentMusic();
+
+    // 系统返回先收起抽屉
+    useBackLayer(open, "play-queue", () => setOpen(false));
 
     if (!open) {
         return null;

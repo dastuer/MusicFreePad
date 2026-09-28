@@ -16,6 +16,7 @@
 - **WebDAV 云备份**：与桌面端同一通道——填同一个服务器、把文件路径指向桌面端的 `/MusicFree/MusicFreeDesktopBackup.json` 即可互相同步；自动递归建目录；密码只存本机、不进备份文件
 - **横竖屏自适应**：竖屏上下堆叠、横屏左右分栏（正在播放页）；网格列数随宽度自适应
 - **原生应用**：基于 Capacitor 打包 Android / iOS（见下文），原生网络栈天然无跨域、支持自定义请求头
+- **系统返回**：Android 返回键 / 全面屏返回手势、iOS 侧滑返回统一接管——先收起浮层（正在播放页 / 播放队列 / 操作面板 / 对话框），再回退页面；已经在最外层则把应用退到后台（音乐继续播放），不会直接退出应用
 
 ## 快速开始
 
@@ -63,7 +64,7 @@ npm run open:ios       # Xcode 打开（macOS）
 ```
 
 - **图标 / 启动图**：`npm run gen:icons` 会重新生成 PWA 图标、`assets/logo.png`(1024)、`assets/splash.png`(2732) 并调用 `capacitor-assets` 写入两个原生工程。
-- **已做好的原生配置**：Android 允许明文 http（`usesCleartextTraffic`）；iOS 放开 ATS（`NSAllowsArbitraryLoads`）、开启后台音频（`UIBackgroundModes: audio`）、iPad 四方向支持；状态栏 / 导航栏配色随暗色主题（`@capacitor/status-bar`）。
+- **已做好的原生配置**：Android 允许明文 http（`usesCleartextTraffic`）；iOS 放开 ATS（`NSAllowsArbitraryLoads`）、开启后台音频（`UIBackgroundModes: audio`）、iPad 四方向支持；状态栏 / 导航栏配色随暗色主题（`@capacitor/status-bar`）；返回手势——Android 返回键 / 全面屏手势走 `@capacitor/app` 的 `backButton` 事件，iOS 侧滑返回在 `ios/App/App/ViewController.swift` 里打开 WKWebView 的历史导航手势，两者统一由 `src/core/systemBack.ts` 消费（浮层 → 页面 → 退到后台）。
 - **Android 出包**：`npm run open:android` 后在 Android Studio 里 `Build > Build APK(s)`（调试包）或生成签名 Bundle（上架）。
 - **本机命令行出包（已配好，可直接用）**：SDK 在 `~/Library/Android/sdk`（已装 platform-36 / build-tools 35+36 / platform-tools，`android/local.properties` 已指向），构建 `cd android && ./gradlew assembleDebug`，产物在 `android/app/build/outputs/apk/debug/app-debug.apk`。装机：`adb install -r android/app/build/outputs/apk/debug/app-debug.apk`，或把 APK 发到设备上直接安装。
 - 上架用签名包：在 `android/app/build.gradle` 配好 signingConfig 后跑 `./gradlew assembleRelease`（或 bundleRelease 出 AAB）。
@@ -113,7 +114,7 @@ src/
     trackPlayer.ts   # 播放器核心（队列/音质降级/失败自救/MediaSession/歌词）
     backup.ts        # 备份导出/恢复（musicfree-desktop 格式）
     musicSheet.ts / musicHistory.ts / searchHistory.ts / appConfig.ts
-    theme.ts / router.ts / mediaSource.ts / pluginUtils.ts / net.ts
+    theme.ts / router.ts / systemBack.ts / mediaSource.ts / pluginUtils.ts / net.ts
   components/    # base（MusicList/SheetCardGrid/Toast/Slider...）+ layout（Sidebar/TopBar/PlayerBar/NowPlaying/PlayQueuePanel）
   pages/         # home / search / sheetDetail / topListDetail / albumDetail / artistDetail / myMusic / history / pluginManage / settings
   hooks/         # usePagedMusicList（展示分页 ↔ 音源页码桥接）

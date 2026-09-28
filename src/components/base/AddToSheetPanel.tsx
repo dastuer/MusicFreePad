@@ -16,12 +16,16 @@ import {
 } from "@/core/musicSheet";
 import Cover from "./Cover";
 import { IconPlus } from "./Icons";
+import { useBackLayer } from "@/core/systemBack";
 
 /** 「添加到歌单」底部面板：喜欢的音乐 + 用户歌单 + 新建 */
 export default function AddToSheetPanel() {
     const state = useAtomValue(addToSheetAtom);
     const sheetsVersion = useAtomValue(sheetsVersionAtom);
     const [sheets, setSheets] = useState<IUserSheet[]>([]);
+
+    // 系统返回先收起面板
+    useBackLayer(!!state, "add-to-sheet", closeAddToSheet);
 
     useEffect(() => {
         if (state) {

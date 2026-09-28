@@ -1,9 +1,14 @@
 import { useAtomValue } from "jotai";
 import { musicActionAtom, closeMusicActions } from "@/core/uiAtoms";
+import { useBackLayer } from "@/core/systemBack";
 
 /** 歌曲长按/更多操作：底部弹出的动作面板（网易云 Pad 风格） */
 export default function MusicActionSheet() {
     const state = useAtomValue(musicActionAtom);
+
+    // 系统返回先收起面板
+    useBackLayer(!!state, "music-actions", closeMusicActions);
+
     if (!state) {
         return null;
     }

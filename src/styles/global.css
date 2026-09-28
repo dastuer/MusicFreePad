@@ -753,10 +753,6 @@ code {
     }
 }
 
-.music-row.current {
-    background: var(--active-bg);
-}
-
 .music-row-index {
     width: 28px;
     text-align: center;
@@ -1132,6 +1128,8 @@ code {
 .np-backdrop {
     position: absolute;
     inset: -60px;
+    /* 无封面时的兜底底色，避免浮层透出底层页面 */
+    background-color: #16161a;
     background-size: cover;
     background-position: center;
     filter: blur(70px) brightness(0.42);
@@ -1790,10 +1788,6 @@ code {
     .queue-row:hover {
     background: var(--hover-bg);
     }
-}
-
-.queue-row.current {
-    background: var(--active-bg);
 }
 
 .queue-row-lead {
