@@ -39,3 +39,16 @@ export function mediaItemKey(item?: { platform?: string; id?: string | number } 
 export function clamp(value: number, min: number, max: number) {
     return Math.min(Math.max(value, min), max);
 }
+
+/** 音质描述里的文件大小：数字按字节格式化，字符串（"12.3MB"）原样展示 */
+export function formatQualitySize(size?: string | number) {
+    if (size === undefined || size === null || size === "") {
+        return undefined;
+    }
+    if (typeof size === "number") {
+        return size > 1024 * 1024
+            ? `${(size / 1024 / 1024).toFixed(1)}MB`
+            : `${Math.max(1, Math.round(size / 1024))}KB`;
+    }
+    return String(size);
+}

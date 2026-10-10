@@ -4,11 +4,20 @@ import { tryPluginMethod } from "@/core/pluginUtils";
 import { pickSourcePlugins, useGlobalSource } from "@/core/mediaSource";
 import { getPlugins } from "@/core/ipc";
 import { TrackPlayerSingleton } from "@/core/trackPlayer";
-import { getUserSheets, removeMusicFromSheet, type IUserSheet } from "@/core/musicSheet";
+import {
+    getUserSheets,
+    removeMusicFromSheetMany,
+    type IUserSheet,
+} from "@/core/musicSheet";
 import MusicList from "@/components/base/MusicList";
 import Cover from "@/components/base/Cover";
-import { IconPlay } from "@/components/base/Icons";
+import ListSearchBar from "@/components/base/ListSearchBar";
+import PlayAllBar from "@/components/base/PlayAllBar";
+import SelectActionsBar from "@/components/base/SelectActionsBar";
+import { IconPlay, IconSearch } from "@/components/base/Icons";
 import { openAddToSheet } from "@/core/uiAtoms";
+import { useListSearch } from "@/hooks/useListSearch";
+import { useMusicMultiSelect } from "@/hooks/useMusicMultiSelect";
 
 /**
  * 歌单详情页（三种来源）：
@@ -117,19 +126,57 @@ export default function SheetDetailPage() {
         return (info as any)?.creator ?? "";
     }, [userSheet, info]);
 
+    // 局部搜索：过滤仅作用于列表视图与播放全部，原歌单数据不动
+    const search = useListSearch(musicList);
+    const viewList = search.active ? search.filtered : musicList;
+
+    // 多选（收藏 / 用户歌单删除）；搜索时「全选」只选当前匹配结果，选中项仍按完整歌单校验
+    const multi = useMusicMultiSelect(musicList, viewList);
+
+    // 切换歌单时退出多选态与搜索态
+    useEffect(() => {
+        multi.exitSelect();
+        search.close();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [userSheetId, sheetItem]);
+
     if (!userSheetId && !sheetItem) {
         return <div className="page-empty">歌单不存在</div>;
     }
 
+    const listId = userSheetId
+        ? `usersheet:${userSheetId}`
+        : `sheet:${sheetItem?.platform}-${sheetItem?.id}`;
+
     const playAll = () => {
-        if (musicList.length) {
+        if (viewList.length) {
             TrackPlayerSingleton.playWithReplacePlayList(
-                TrackPlayerSingleton.pickPlayAllStart(musicList),
-                musicList,
-                userSheetId ? `usersheet:${userSheetId}` : `sheet:${sheetItem?.platform}-${sheetItem?.id}`,
+                TrackPlayerSingleton.pickPlayAllStart(viewList),
+                viewList,
+                listId,
                 true,
             );
         }
+    };
+
+    /** 从歌单移除（单首 / 多选批量） */
+    const removeFromSheet = (items: IMusic.IMusicItem[]) => {
+        if (!userSheetId) {
+            return;
+        }
+        removeMusicFromSheetMany(userSheetId, items);
+        const keys = new Set(items.map((it) => `${it.platform}-${it.id}`));
+        setUserSheet((prev) =>
+            prev
+                ? {
+                      ...prev,
+                      musicList: prev.musicList.filter(
+                          (it) => !keys.has(`${it.platform}-${it.id}`),
+                      ),
+                  }
+                : prev,
+        );
+        setMusicList((prev) => prev.filter((it) => !keys.has(`${it.platform}-${it.id}`)));
     };
 
     return (
@@ -141,30 +188,62 @@ export default function SheetDetailPage() {
                     <div className="detail-sub">{subtitle}</div>
                     {info?.description && <div className="detail-desc">{info.description}</div>}
                     <div className="detail-actions">
-                        <button className="btn primary" onClick={playAll} disabled={!musicList.length}>
-                            <IconPlay size={16} />
-                            <span>播放全部</span>
-                        </button>
-                        <button
-                            className="btn ghost"
-                            disabled={!musicList.length}
-                            onClick={() => openAddToSheet(musicList)}
-                        >
-                            收藏全部
-                        </button>
-                        {userSheetId && musicList.length > 0 && (
-                            <button
-                                className="btn ghost"
-                                onClick={() => {
-                                    TrackPlayerSingleton.addNext(musicList);
-                                }}
-                            >
-                                全部下一首播放
-                            </button>
+                        {multi.selectMode ? (
+                            <PlayAllBar
+                                count={viewList.length}
+                                onPlayAll={playAll}
+                                selectMode
+                                selectedCount={multi.selected.length}
+                                onExitSelect={multi.exitSelect}
+                                onSelectAll={multi.selectAll}
+                                onDeselectAll={multi.deselectAll}
+                            />
+                        ) : (
+                            <>
+                                <button className="btn primary" onClick={playAll} disabled={!musicList.length}>
+                                    <IconPlay size={16} />
+                                    <span>播放全部</span>
+                                </button>
+                                <button
+                                    className="btn ghost"
+                                    disabled={!musicList.length}
+                                    onClick={() => openAddToSheet(musicList)}
+                                >
+                                    收藏全部
+                                </button>
+                                <button
+                                    className="btn ghost"
+                                    disabled={!musicList.length}
+                                    onClick={() => search.setOpen(true)}
+                                    title="搜索本歌单"
+                                >
+                                    <IconSearch size={15} />
+                                    <span>搜索</span>
+                                </button>
+                                <button
+                                    className="btn ghost"
+                                    disabled={!musicList.length}
+                                    onClick={multi.enterSelect}
+                                >
+                                    多选
+                                </button>
+                                {userSheetId && musicList.length > 0 && (
+                                    <button
+                                        className="btn ghost"
+                                        onClick={() => {
+                                            TrackPlayerSingleton.addNext(musicList);
+                                        }}
+                                    >
+                                        全部下一首播放
+                                    </button>
+                                )}
+                            </>
                         )}
                     </div>
                 </div>
             </div>
+
+            {search.open && <ListSearchBar search={search} />}
 
             {loading ? (
                 <div className="page-loading">
@@ -173,40 +252,32 @@ export default function SheetDetailPage() {
             ) : error && !musicList.length ? (
                 <div className="page-empty">{error}</div>
             ) : (
-                <MusicList
-                    musicList={musicList}
-                    listId={userSheetId ? `usersheet:${userSheetId}` : `sheet:${sheetItem?.platform}-${sheetItem?.id}`}
-                    onLoadMore={userSheetId ? undefined : loadMore}
-                    loadingMore={loadingMore}
-                    isEnd={userSheetId ? true : isEnd}
-                    onRemoveItem={
-                        userSheetId
-                            ? (item) => {
-                                  removeMusicFromSheet(userSheetId, item);
-                                  setUserSheet((prev) =>
-                                      prev
-                                          ? {
-                                                ...prev,
-                                                musicList: prev.musicList.filter(
-                                                    (it) =>
-                                                        !(
-                                                            it.id === item.id &&
-                                                            it.platform === item.platform
-                                                        ),
-                                                ),
-                                            }
-                                          : prev,
-                                  );
-                                  setMusicList((prev) =>
-                                      prev.filter(
-                                          (it) =>
-                                              !(it.id === item.id && it.platform === item.platform),
-                                      ),
-                                  );
-                              }
-                            : undefined
-                    }
-                />
+                <>
+                    <MusicList
+                        musicList={viewList}
+                        listId={listId}
+                        onLoadMore={userSheetId ? undefined : loadMore}
+                        loadingMore={loadingMore}
+                        isEnd={userSheetId ? true : isEnd}
+                        selectMode={multi.selectMode}
+                        selectedKeys={multi.selectedKeys}
+                        onToggleSelect={multi.toggleSelect}
+                        onRemoveItem={
+                            userSheetId && !multi.selectMode
+                                ? (item) => removeFromSheet([item])
+                                : undefined
+                        }
+                    />
+                    {multi.selectMode && (
+                        <SelectActionsBar
+                            count={multi.selected.length}
+                            onCollect={multi.startCollect}
+                            onDelete={
+                                userSheetId ? () => multi.startDelete(removeFromSheet) : undefined
+                            }
+                        />
+                    )}
+                </>
             )}
         </div>
     );

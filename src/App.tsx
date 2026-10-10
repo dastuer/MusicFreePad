@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useCurrentRoute } from "@/core/router";
 import { TrackPlayerSingleton } from "@/core/trackPlayer";
+import { setupMediaNotification } from "@/core/mediaNotification";
 import { pluginHost } from "@/core/ipc";
 import { useThemeSetup } from "@/core/theme";
 import { ensureLikesSheet } from "@/core/musicSheet";
@@ -12,6 +13,8 @@ import PlayQueuePanel from "@/components/layout/PlayQueuePanel";
 import ToastHost from "@/components/base/ToastHost";
 import MusicActionSheet from "@/components/base/MusicActionSheet";
 import AddToSheetPanel from "@/components/base/AddToSheetPanel";
+import SleepTimerSheet from "@/components/base/SleepTimerSheet";
+import SingleSelectSheet from "@/components/base/SingleSelectSheet";
 import PromptDialog from "@/components/base/PromptDialog";
 import HomePage from "@/pages/home";
 import SearchPage from "@/pages/search";
@@ -72,6 +75,8 @@ export default function App() {
         ensureLikesSheet();
         pluginHost.setup().catch((e: any) => console.warn("[app] 插件宿主初始化失败", e));
         TrackPlayerSingleton.setup();
+        // 系统媒体通知（Android 下拉栏媒体卡片；仅原生环境生效）
+        setupMediaNotification();
     }, []);
 
     return (
@@ -90,6 +95,8 @@ export default function App() {
             <PlayQueuePanel />
             <MusicActionSheet />
             <AddToSheetPanel />
+            <SleepTimerSheet />
+            <SingleSelectSheet />
             <PromptDialog />
             <ToastHost />
         </div>

@@ -2641,3 +2641,333 @@ code {
         font-size: 20px;
     }
 }
+
+/* ---------- 列表局部搜索 ---------- */
+
+.list-search-bar {
+    position: sticky;
+    top: 0;
+    z-index: 31;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 0;
+    background: var(--page-bg);
+}
+
+.search-input-wrap {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 38px;
+    padding: 0 12px;
+    border-radius: 19px;
+    background: var(--bg-card);
+    color: var(--text-tertiary);
+}
+
+.search-input-wrap input {
+    flex: 1;
+    min-width: 0;
+    font-size: 14px;
+    color: var(--text-color);
+    outline: none;
+    border: none;
+    background: transparent;
+}
+
+.ls-clear {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: rgba(128, 128, 128, 0.22);
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.ls-cancel {
+    flex-shrink: 0;
+    height: 38px;
+    padding: 0 6px;
+    display: flex;
+    align-items: center;
+    font-size: 14px;
+    color: var(--text-secondary);
+}
+
+/* ---------- 播放全部 / 多选态行 ---------- */
+
+.detail-playall {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 12px 0 4px;
+    height: 50px;
+    padding: 6px 0;
+    background: transparent;
+    color: var(--text-color);
+    font-size: 15px;
+    font-weight: 600;
+    box-shadow: none;
+}
+
+.detail-playall .pa-icon {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: var(--primary-color);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.detail-playall .pa-icon svg {
+    margin-left: 1px;
+}
+
+.detail-playall .pa-sub {
+    font-weight: 400;
+    font-size: 12.5px;
+    color: var(--text-tertiary);
+}
+
+.detail-playall .pa-select {
+    margin-left: auto;
+    width: 38px;
+    height: 38px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-color);
+}
+
+/* 多选态头部：全选 + 已选提示 + 完成 */
+.detail-playall.select-mode {
+    gap: 10px;
+    padding: 8px 0;
+}
+
+.pa-select-all {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14.5px;
+    font-weight: 600;
+    color: var(--text-color);
+    padding: 4px 0;
+}
+
+.pa-selected-tip {
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--text-tertiary);
+}
+
+.pa-done {
+    margin-left: auto;
+    padding: 6px 8px;
+    font-size: 14.5px;
+    font-weight: 600;
+    color: var(--primary-color);
+}
+
+/* 行首勾选圈（多选） */
+.row-check {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    border: 1.5px solid var(--text-placeholder, rgba(128, 128, 128, 0.4));
+    color: transparent;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: background 0.15s, border-color 0.15s;
+}
+
+.row-check.checked {
+    background: var(--primary-color);
+    border-color: var(--primary-color);
+    color: #fff;
+}
+
+.music-row.selected {
+    opacity: 0.55;
+}
+
+/* ---------- 多选底部操作栏 ---------- */
+
+.select-actions-bar {
+    position: sticky;
+    bottom: 0;
+    z-index: 5;
+    display: flex;
+    align-items: stretch;
+    margin: 8px 0 0;
+    padding: 6px 10px 10px;
+    background: var(--page-bg);
+    border-top: 1px solid var(--divider);
+}
+
+.select-action {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    padding: 6px 0;
+    font-size: 11.5px;
+    color: var(--text-color);
+}
+
+.select-action:disabled {
+    color: var(--text-tertiary);
+    opacity: 0.5;
+}
+
+.select-action:active:not(:disabled) {
+    opacity: 0.7;
+}
+
+/* ---------- 定时关闭面板 ---------- */
+
+.sleep-timer-panel {
+    width: min(520px, 100%);
+    background: var(--bg-elev);
+    border-radius: 18px 18px 0 0;
+    padding: 16px 16px calc(var(--safe-bottom) + 16px);
+    animation: slide-up 0.2s ease-out;
+}
+
+.sleep-timer-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 15px;
+    font-weight: 700;
+    padding: 0 2px 14px;
+    border-bottom: 1px solid var(--divider);
+    font-variant-numeric: tabular-nums;
+}
+
+.sleep-timer-eta {
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.sleep-timer-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 10px 0 4px;
+}
+
+.sleep-timer-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 10px;
+    border-radius: 10px;
+}
+
+.sleep-timer-row:active {
+    background: var(--hover-bg);
+}
+
+.sleep-timer-row-title {
+    flex: 1;
+    font-size: 14.5px;
+}
+
+.sleep-timer-row-value {
+    margin-left: 8px;
+    font-size: 12.5px;
+    color: var(--text-secondary);
+}
+
+.sleep-timer-radio {
+    width: 19px;
+    height: 19px;
+    border-radius: 50%;
+    border: 1.5px solid var(--text-placeholder);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    flex-shrink: 0;
+    transition: background 0.15s, border-color 0.15s;
+}
+
+.sleep-timer-radio.on {
+    background: var(--primary-color);
+    border-color: var(--primary-color);
+}
+
+.sleep-timer-after-play {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin: 12px 2px 0;
+    font-size: 13.5px;
+    color: var(--text-secondary);
+}
+
+.sleep-timer-check {
+    width: 18px;
+    height: 18px;
+    border-radius: 6px;
+    border: 1.5px solid var(--text-placeholder);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    line-height: 1;
+    color: transparent;
+    flex-shrink: 0;
+}
+
+.sleep-timer-check.on {
+    background: var(--primary-color);
+    border-color: var(--primary-color);
+    color: #fff;
+}
+
+.sleep-timer-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 14px;
+}
+
+.sleep-timer-actions .btn {
+    flex: 1;
+    justify-content: center;
+    padding: 11px;
+}
+
+/* ---------- 单选浮窗（音质/倍速） ---------- */
+
+.single-select-sub {
+    text-align: center;
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin: -4px 0 10px;
+}
+
+.single-select-check {
+    color: var(--primary-color);
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+}

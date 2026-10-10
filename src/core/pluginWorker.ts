@@ -397,8 +397,14 @@ const _require = (packageName: string) => {
     if (!pkg) {
         throw new Error(`package not supported: ${packageName}`);
     }
-    pkg.default = pkg;
-    return pkg;
+    try {
+        pkg.default = pkg;
+        return pkg;
+    } catch {
+        // Vite 产物下 import * as 的 ESM 命名空间（cheerio 等）只读，不能挂 default：
+        // 包一层补上，兼容插件 require('x').default 的桌面端用法
+        return { ...pkg, default: pkg };
+    }
 };
 
 const _console = {
@@ -417,26 +423,48 @@ interface MountedPlugin {
 
 const mounted = new Map<string, MountedPlugin>();
 
-function safeStringify(value: any): string {
-    const seen = new WeakSet();
-    return JSON.stringify(value, (_k, v) => {
-        if (typeof v === "function" || typeof v === "symbol") {
-            return null;
-        }
-        if (typeof v === "object" && v !== null) {
-            if (seen.has(v)) {
-                return null;
+/**
+ * 序列化插件结果（对齐桌面端 IPC 序列化行为）：
+ *  - 函数/Symbol 置空、undefined 字段丢弃；
+ *  - 真循环引用断开为 null（用「祖先栈」判定，只有还挂在当前递归链上的对象才算环）；
+ *  - 共享引用（同一对象出现在多处，如酷我插件 pinned 与分组里的同一标签）原样保留为重复数据。
+ *    注意不能用全局 seen 集合：会把共享引用误判成环写成 null，上游渲染 {item.title} 直接崩。
+ */
+function serializeValue(value: any, ancestors: Set<object>): any {
+    if (typeof value === "function" || typeof value === "symbol") {
+        return null;
+    }
+    if (value === null || typeof value !== "object") {
+        return value;
+    }
+    if (ancestors.has(value)) {
+        return null;
+    }
+    const toJSON = (value as any).toJSON;
+    if (typeof toJSON === "function") {
+        return serializeValue(toJSON.call(value), ancestors);
+    }
+    ancestors.add(value);
+    const isArray = Array.isArray(value);
+    const out: Record<string, any> = isArray ? [] : {};
+    for (const key of Object.keys(value)) {
+        const serialized = serializeValue(value[key], ancestors);
+        if (serialized === undefined) {
+            if (isArray) {
+                out[key] = null;
             }
-            seen.add(v);
+            continue;
         }
-        return v;
-    });
+        out[key] = serialized;
+    }
+    ancestors.delete(value);
+    return out;
 }
 
 /** 序列化插件结果：函数/Symbol 置空、循环引用断开（对齐桌面端 IPC 序列化行为） */
 function sanitize(result: any) {
     try {
-        return JSON.parse(safeStringify(result));
+        return serializeValue(result, new Set());
     } catch {
         return null;
     }
@@ -562,7 +590,8 @@ function mountPlugin(code: string, userVariables: Record<string, string>): Plugi
             throw { instance, errorReason: "VersionNotMatch" };
         }
     } catch (e: any) {
-        errorReason = e?.errorReason ?? "CannotParse";
+        // 带上真实报错：挂载失败时用户能在插件管理/恢复结果里看到具体原因
+        errorReason = e?.errorReason ?? `CannotParse（${e?.message ?? e}）`;
         instance = e?.instance ?? {
             platform: "",
             async getMediaSource() {

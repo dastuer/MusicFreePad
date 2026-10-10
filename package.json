@@ -13,6 +13,10 @@
         "cap:sync": "npm run build && cap sync",
         "open:ios": "cap open ios",
         "open:android": "cap open android",
+        "android:connect": "node scripts/device.mjs connect",
+        "android:run": "node scripts/device.mjs run",
+        "android:log": "node scripts/device.mjs log",
+        "android:live": "node scripts/device.mjs live",
         "ios:build": "npm run cap:sync && cd ios/App && xcodebuild -project App.xcodeproj -scheme App -configuration Debug -sdk iphonesimulator CODE_SIGNING_ALLOWED=NO -derivedDataPath /tmp/mfp-ios-dd build",
         "ios:device": "npm run cap:sync && cd ios/App && xcodebuild -project App.xcodeproj -scheme App -configuration Debug -destination 'id=00008027-000D58E11184002E' -derivedDataPath /tmp/mfp-ios-dd -allowProvisioningUpdates build && xcrun devicectl device install app --device 00008027-000D58E11184002E /tmp/mfp-ios-dd/Build/Products/Debug-iphoneos/App.app && xcrun devicectl device process launch --device 00008027-000D58E11184002E com.huah.musicfree.pad"
     },

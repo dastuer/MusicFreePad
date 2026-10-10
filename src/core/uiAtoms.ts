@@ -43,6 +43,9 @@ export interface IMusicAction {
 
 export interface IMusicActionState {
     musicItem: IMusic.IMusicItem;
+    /** 覆盖标题/副标题（批量操作确认等场景默认展示歌曲名） */
+    title?: string;
+    subtitle?: string;
     actions: IMusicAction[];
 }
 
@@ -90,4 +93,44 @@ export function openPrompt(state: IPromptState) {
 
 export function closePrompt() {
     getDefaultStore().set(promptAtom, null);
+}
+
+/** ---------- 定时关闭面板（播放页更多菜单入口） ---------- */
+
+export const sleepTimerOpenAtom = atom(false);
+
+export function openSleepTimer() {
+    getDefaultStore().set(sleepTimerOpenAtom, true);
+}
+
+export function closeSleepTimer() {
+    getDefaultStore().set(sleepTimerOpenAtom, false);
+}
+
+/** ---------- 单选浮窗（音质/倍速等多选一项统一交互） ---------- */
+
+export interface ISingleSelectOption {
+    value: string;
+    label: string;
+    desc?: string;
+}
+
+export interface ISingleSelectState {
+    /** 标题；不传则不渲染头部，直接展示选项 */
+    title?: string;
+    subtitle?: string;
+    options: ISingleSelectOption[];
+    /** 当前选中值，浮窗内打勾展示 */
+    value?: string;
+    onSelect: (value: string) => void;
+}
+
+export const singleSelectAtom = atomWithReset<ISingleSelectState | null>(null);
+
+export function openSingleSelect(state: ISingleSelectState) {
+    getDefaultStore().set(singleSelectAtom, state);
+}
+
+export function closeSingleSelect() {
+    getDefaultStore().set(singleSelectAtom, null);
 }

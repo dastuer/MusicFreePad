@@ -15,10 +15,19 @@ export default function MusicActionSheet() {
     return (
         <div className="sheet-mask" onClick={() => closeMusicActions()}>
             <div className="action-sheet" onClick={(e) => e.stopPropagation()}>
-                <div className="action-sheet-song">
-                    <div className="action-sheet-song-title">{state.musicItem.title}</div>
-                    <div className="action-sheet-song-artist">{state.musicItem.artist}</div>
-                </div>
+                {state.title ? (
+                    <div className="action-sheet-song">
+                        <div className="action-sheet-song-title">{state.title}</div>
+                        {state.subtitle && (
+                            <div className="action-sheet-song-artist">{state.subtitle}</div>
+                        )}
+                    </div>
+                ) : (
+                    <div className="action-sheet-song">
+                        <div className="action-sheet-song-title">{state.musicItem.title}</div>
+                        <div className="action-sheet-song-artist">{state.musicItem.artist}</div>
+                    </div>
+                )}
                 {state.actions.map((action, idx) => (
                     <button
                         key={idx}

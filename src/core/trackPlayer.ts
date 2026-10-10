@@ -1,6 +1,6 @@
 import { atom, getDefaultStore, useAtomValue } from "jotai";
 import EventEmitter from "eventemitter3";
-import { buildPlayableMediaUrl } from "./net";
+import { buildPlayableMediaUrl, upgradeToHttps } from "./net";
 import { getPluginByMedia, pluginCall } from "./ipc";
 import { setMusicHistory } from "./musicHistory";
 import { getQuality, setQuality, getConfig } from "./appConfig";
@@ -42,8 +42,10 @@ export interface IQualitySwitchResult {
 /**
  * 单次 getMediaSource 的最长等待。
  * 换歌时旧歌已经被停掉，等待期是静音的，所以不能让一个卡死的音源拖满 pluginCall 的 30s。
+ * 下限要容得下移动端的多级解析链：策略下发 + eapi + outer-url 重定向跟随
+ * （VIP 歌会整包拉一次试听 mp3 再回退酷我 search/nmobi），弱网下 10s 会误杀正常解析。
  */
-const MEDIA_SOURCE_TIMEOUT = 10000;
+const MEDIA_SOURCE_TIMEOUT = 15000;
 
 /** 连续 N 首都播不出来就停下，不再自动往后跳（否则坏音源会把整个歌单空转一圈） */
 const MAX_AUTO_SKIP = 3;
@@ -284,8 +286,12 @@ class TrackPlayer extends EventEmitter {
     private pendingStartPosition = 0;
     private resolvedQuality: IMusic.IQualityKey | null = null;
     private resolvedSourceUrl: string | null = null;
+    /** 当前 src 是由 http 直链升级的 https：播放失败时可回退原始 http 重试 */
+    private resolvedHttpUpgraded = false;
     private qualityRetrying = false;
     private qualityRetryCount = 0;
+    /** http 直链回退重试在途（与 qualityRetrying 同语义） */
+    private insecureRetrying = false;
     /** 无缝切音质时后台缓冲用的临时播放器，交接后变成主播放器 */
     private probeAudio: HTMLAudioElement | null = null;
     /** 在途切换的序号：换歌 / 再次切换时用它作废旧预取 */
@@ -629,7 +635,40 @@ class TrackPlayer extends EventEmitter {
         const reason = rawReason || "未知原因";
         this.isLoading = false;
         const retryPosition = this.audio?.currentTime || 0;
+        const failedSrc = this.audio?.src || "";
         this.detachAudio();
+
+        // https 升级后的直链加载失败：回退原始 http 直链重试一次
+        // （WebView 的 allowMixedContent 兜底，覆盖只支持 http 的音源）。
+        // 必须先于音质降级——失败原因是链接本身，不是音质。
+        if (
+            this.resolvedHttpUpgraded &&
+            this.resolvedSourceUrl?.startsWith("http://") &&
+            failedSrc === upgradeToHttps(this.resolvedSourceUrl) &&
+            !this.insecureRetrying
+        ) {
+            console.warn(
+                `[trackPlayer] 播放失败：${musicItem.title}（${reason}），回退原始 http 直链重试`,
+            );
+            this.pendingStartPosition = retryPosition;
+            this.emit(TrackPlayerEvents.PlayFailed, {
+                musicItem,
+                reason,
+                willSkip: false,
+            } as IPlayFailurePayload);
+            this.insecureRetrying = true;
+            try {
+                await this.play(
+                    musicItem,
+                    true,
+                    this.isInPlayList(musicItem),
+                    this.resolvedQuality ?? undefined,
+                );
+            } finally {
+                this.insecureRetrying = false;
+            }
+            return;
+        }
 
         const lowerQuality =
             options?.allowQualityRetry === false ? null : this.lowerQualityForRetry(musicItem);
@@ -911,6 +950,8 @@ class TrackPlayer extends EventEmitter {
         src: string;
         source?: IPlugin.IMediaSourceResult;
         quality: IMusic.IQualityKey | null;
+        /** src 是从 http 直链升级的 https（失败时可回退原始链接） */
+        httpUpgraded: boolean;
     } | null> {
         const plugin = await getPluginByMedia(musicItem);
         if (plugin?.supportedMethods.includes("getMediaSource")) {
@@ -939,14 +980,20 @@ class TrackPlayer extends EventEmitter {
                             console.warn(`[trackPlayer] ${quality} 返回的直链与刚失败的相同，跳过`);
                             continue;
                         }
+                        const src = buildPlayableMediaUrl({
+                            url: source.url,
+                            headers: source.headers,
+                            userAgent: source.userAgent,
+                            insecure: this.insecureRetrying,
+                        });
                         return {
-                            src: buildPlayableMediaUrl({
-                                url: source.url,
-                                headers: source.headers,
-                                userAgent: source.userAgent,
-                            }),
+                            src,
                             source,
                             quality,
+                            httpUpgraded:
+                                !this.insecureRetrying &&
+                                source.url.startsWith("http://") &&
+                                src === upgradeToHttps(source.url),
                         };
                     }
                 } catch (e: any) {
@@ -958,10 +1005,15 @@ class TrackPlayer extends EventEmitter {
             if (musicItem.url === excludeUrl) {
                 return null;
             }
+            const src = buildPlayableMediaUrl({ url: musicItem.url, insecure: this.insecureRetrying });
             return {
-                src: buildPlayableMediaUrl({ url: musicItem.url }),
+                src,
                 source: { url: musicItem.url },
                 quality: null,
+                httpUpgraded:
+                    !this.insecureRetrying &&
+                    musicItem.url.startsWith("http://") &&
+                    src === upgradeToHttps(musicItem.url),
             };
         }
         return null;
@@ -1003,7 +1055,7 @@ class TrackPlayer extends EventEmitter {
         const willLoad = isNew || !!forcePlay;
         const resumePosition = this.isCurrentMusic(target) ? this.pendingStartPosition : 0;
 
-        if (!this.autoSkipping && !this.qualityRetrying) {
+        if (!this.autoSkipping && !this.qualityRetrying && !this.insecureRetrying) {
             this.autoSkipCount = 0;
             this.qualityRetryCount = 0;
         }
@@ -1033,7 +1085,11 @@ class TrackPlayer extends EventEmitter {
             const resolved = await this.resolveMediaUrl(
                 target,
                 qualityOverride,
-                qualityOverride ? (this.resolvedSourceUrl ?? undefined) : undefined,
+                // excludeUrl 只该挡「同音质反复拿同一条失败直链」；
+                // http 回退重试时要的恰恰是同一条直链的原始 http 版本，不能排除
+                qualityOverride && !this.insecureRetrying
+                    ? (this.resolvedSourceUrl ?? undefined)
+                    : undefined,
             );
             if (this.pendingPlayId !== playId) {
                 return;
@@ -1046,6 +1102,7 @@ class TrackPlayer extends EventEmitter {
             }
             this.resolvedQuality = resolved.quality;
             this.resolvedSourceUrl = resolved.source?.url ?? null;
+            this.resolvedHttpUpgraded = resolved.httpUpgraded;
             setAtom(playingQualityAtom, resolved.quality);
             const audio = this.audio;
             if (!audio) {
@@ -1412,6 +1469,7 @@ class TrackPlayer extends EventEmitter {
             src: string;
             source?: IPlugin.IMediaSourceResult;
             quality: IMusic.IQualityKey | null;
+            httpUpgraded: boolean;
         },
     ): IQualitySwitchResult {
         const old = this.audio;
@@ -1445,6 +1503,7 @@ class TrackPlayer extends EventEmitter {
         this.stallNudges = 0;
         this.resolvedQuality = resolved.quality;
         this.resolvedSourceUrl = resolved.source?.url ?? null;
+        this.resolvedHttpUpgraded = resolved.httpUpgraded;
         setAtom(playingQualityAtom, resolved.quality);
         setAtom(progressAtom, {
             position,
@@ -1515,6 +1574,9 @@ export function useVolume() {
 }
 export function useQuality() {
     return useAtomValue(qualityAtom);
+}
+export function useRate() {
+    return useAtomValue(rateAtom);
 }
 export function usePlayingQuality() {
     return useAtomValue(playingQualityAtom);

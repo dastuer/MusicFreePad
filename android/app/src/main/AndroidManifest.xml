@@ -28,9 +28,24 @@
             android:grantUriPermissions="true">
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths" />
         </provider>
+
+        <!-- 播放通知前台服务：系统下拉栏媒体卡片（见 MediaPlaybackService） -->
+        <service
+            android:name=".MediaPlaybackService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
     </application>
 
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 下拉栏媒体通知（Android 13+ 运行时申请） -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 播放中保活的前台服务（Android 14+ 需要声明 mediaPlayback 类型） -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- MediaSessionCompat 媒体按键唤醒依赖 -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- 后台播放保活：请求加入电池优化白名单（Doze 下限网会掐断流式播放） -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 </manifest>

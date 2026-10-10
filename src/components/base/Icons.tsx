@@ -17,6 +17,29 @@ function base(size: number) {
     };
 }
 
+export const IconCheck = ({ size = 22, strokeWidth = 2 }: IIconProps) => (
+    <svg {...base(size)} strokeWidth={strokeWidth}>
+        <path d="M4.5 12.5l5 5L19.5 7" />
+    </svg>
+);
+
+export const IconMultiSelect = ({ size = 22, strokeWidth = 1.8 }: IIconProps) => (
+    <svg {...base(size)} strokeWidth={strokeWidth}>
+        <path d="M4 6h16M4 12h16" />
+        <path d="M4 18h7" />
+        <path d="M13.5 18l2.4 2.4 4.6-5" />
+    </svg>
+);
+
+export const IconDownload = ({ size = 22, strokeWidth = 1.8 }: IIconProps) => (
+    <svg {...base(size)} strokeWidth={strokeWidth}>
+        <path d="M12 4v11" />
+        <path d="M7.5 10.5L12 15l4.5-4.5" />
+        <path d="M4.5 19.5h15" />
+    </svg>
+);
+
+
 export const IconDiscover = ({ size = 22, strokeWidth = 1.8 }: IIconProps) => (
     <svg {...base(size)} strokeWidth={strokeWidth}>
         <circle cx="12" cy="12" r="9" />

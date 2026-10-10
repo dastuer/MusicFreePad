@@ -8,6 +8,7 @@ import {
     useRepeatMode,
     useVolume,
     useQuality,
+    useRate,
     usePlayingQuality,
     useQualitySwitching,
     applyQuality,
@@ -15,11 +16,19 @@ import {
     loadCurrentLyric,
     currentLyricAtom,
 } from "@/core/trackPlayer";
-import { nowPlayingOpenAtom, queueOpenAtom, openMusicActions, showToast } from "@/core/uiAtoms";
+import {
+    nowPlayingOpenAtom,
+    queueOpenAtom,
+    openMusicActions,
+    openAddToSheet,
+    openSleepTimer,
+    openSingleSelect,
+    showToast,
+} from "@/core/uiAtoms";
 import { useBackLayer } from "@/core/systemBack";
 import { toggleLike, isLikedMusic, likesVersionAtom } from "@/core/musicSheet";
 import { navigate } from "@/core/router";
-import { formatSeconds } from "@/core/utils";
+import { formatSeconds, formatQualitySize } from "@/core/utils";
 import Cover from "@/components/base/Cover";
 import Slider from "@/components/base/Slider";
 import VSlider from "@/components/base/VSlider";
@@ -46,6 +55,12 @@ import {
  *  - 横屏：左黑胶 + 右标题/歌词，操作区在左下；竖屏：标题/黑胶/歌词/操作区自上而下；
  *  - 底部三段式：操作行（喜欢/音质/音量/更多）、进度行、传输控制行（循环/上一首/播放/下一首/队列）。
  */
+
+/** 音质档展示顺序 */
+const QUALITY_ORDER: IMusic.IQualityKey[] = ["low", "standard", "high", "super"];
+/** 倍速选项 */
+const RATE_OPTIONS = [0.75, 1, 1.25, 1.5];
+
 export default function NowPlaying() {
     const open = useAtomValue(nowPlayingOpenAtom);
     const setOpen = useSetAtom(nowPlayingOpenAtom);
@@ -55,13 +70,13 @@ export default function NowPlaying() {
     const repeatMode = useRepeatMode();
     const volume = useVolume();
     const quality = useQuality();
+    const rate = useRate();
     const playingQuality = usePlayingQuality();
     const switchingQuality = useQualitySwitching();
     const lyric = useAtomValue(currentLyricAtom);
     const likesVersion = useAtomValue(likesVersionAtom);
     const setQueueOpen = useSetAtom(queueOpenAtom);
     const [liked, setLiked] = useState<boolean | null>(null);
-    const [qualityMenuOpen, setQualityMenuOpen] = useState(false);
     const [volumePopupOpen, setVolumePopupOpen] = useState(false);
     const lyricRef = useRef<HTMLDivElement | null>(null);
     const activeLineRef = useRef<number>(-1);
@@ -108,7 +123,6 @@ export default function NowPlaying() {
     useEffect(() => {
         if (!open) {
             setVolumePopupOpen(false);
-            setQualityMenuOpen(false);
         }
     }, [open]);
 
@@ -203,6 +217,51 @@ export default function NowPlaying() {
     const likeIt = () => {
         setLiked(toggleLike(currentMusic));
     };
+
+    /** 当前歌曲支持的音质档（插件没报 qualities 时给全档） */
+    const qualityOptions = () => {
+        const supported = QUALITY_ORDER.filter((q) => currentMusic.qualities?.[q]);
+        return (supported.length ? supported : QUALITY_ORDER).map((q) => ({
+            value: q,
+            label: QUALITY_LABEL[q],
+            desc: formatQualitySize(currentMusic.qualities?.[q]?.size),
+        }));
+    };
+
+    const openQualitySheet = () => {
+        // 勾与徽标一致，都跟实际播放档走：本曲降级后（插件没有请求档 / 失败降档重试）
+        // 请求档（quality）还在，实际播的是 playingQuality，勾要是还打在请求档上就和徽标对不上了
+        const effectiveQuality = playingQuality ?? quality;
+        openSingleSelect({
+            title: "播放音质",
+            subtitle: switchingQuality
+                ? "正在缓冲新音质，当前播放不中断"
+                : playingQuality && playingQuality !== quality
+                  ? `当前音源按${QUALITY_LABEL[playingQuality]}播放，选择其他音质可重新尝试`
+                  : undefined,
+            options: qualityOptions(),
+            value: effectiveQuality,
+            onSelect: async (v) => {
+                const next = v as IMusic.IQualityKey;
+                const msg = qualitySwitchToast(await applyQuality(next), next);
+                if (msg) {
+                    showToast(msg);
+                }
+            },
+        });
+    };
+
+    const openRateSheet = () => {
+        openSingleSelect({
+            title: "倍速播放",
+            options: RATE_OPTIONS.map((r) => ({ value: String(r), label: `${r}x` })),
+            value: String(rate),
+            onSelect: (v) => {
+                TrackPlayerSingleton.setRate(Number(v));
+            },
+        });
+    };
+
     const openMoreActions = () => {
         const actions: { label: string; onClick: () => void; danger?: boolean }[] = [
             {
@@ -211,6 +270,10 @@ export default function NowPlaying() {
                     TrackPlayerSingleton.addNext(currentMusic);
                     showToast("已加入下一首播放");
                 },
+            },
+            {
+                label: "收藏到歌单",
+                onClick: () => openAddToSheet([currentMusic]),
             },
         ];
         if (currentMusic.albumId !== undefined) {
@@ -230,6 +293,24 @@ export default function NowPlaying() {
                 },
             });
         }
+        if (currentMusic.artistId !== undefined) {
+            actions.push({
+                label: "查看歌手",
+                onClick: () => {
+                    setOpen(false);
+                    navigate("artistDetail", {
+                        artistItem: {
+                            id: currentMusic.artistId,
+                            platform: currentMusic.platform,
+                            name: currentMusic.artist,
+                            avatar: currentMusic.artwork,
+                        },
+                    });
+                },
+            });
+        }
+        actions.push({ label: "倍速播放", onClick: openRateSheet });
+        actions.push({ label: "定时关闭", onClick: openSleepTimer });
         openMusicActions({ musicItem: currentMusic, actions });
     };
 
@@ -312,36 +393,11 @@ export default function NowPlaying() {
                                     className={`quality-badge np-quality-badge ${
                                         switchingQuality ? "switching" : ""
                                     }`}
-                                    onClick={() => setQualityMenuOpen((v) => !v)}
+                                    onClick={openQualitySheet}
                                     title={switchingQuality ? "正在缓冲新音质，当前播放不中断" : "音质"}
                                 >
                                     {QUALITY_LABEL[shownQuality]}
                                 </button>
-                                {qualityMenuOpen && (
-                                    <div className="quality-menu">
-                                        {(Object.keys(QUALITY_LABEL) as IMusic.IQualityKey[]).map((q) => (
-                                            <div
-                                                key={q}
-                                                className={`quality-item ${q === quality ? "selected" : ""}`}
-                                                onClick={async () => {
-                                                    setQualityMenuOpen(false);
-                                                    if (q === quality) {
-                                                        return;
-                                                    }
-                                                    const msg = qualitySwitchToast(
-                                                        await applyQuality(q),
-                                                        q,
-                                                    );
-                                                    if (msg) {
-                                                        showToast(msg);
-                                                    }
-                                                }}
-                                            >
-                                                {QUALITY_LABEL[q]}
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
                             </div>
                             <div className="np-volume-anchor" ref={volumePopRef}>
                                 <button

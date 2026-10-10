@@ -26,6 +26,9 @@ AuthKey*.p8
 .env.*
 local.properties
 
+# 本地跑服务的输出日志
+nohup.out
+
 # 编辑器 / 系统
 .DS_Store
 .idea/

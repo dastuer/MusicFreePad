@@ -5,8 +5,10 @@ import { pickSourcePlugins, useGlobalSource } from "@/core/mediaSource";
 import { getPlugins } from "@/core/ipc";
 import { TrackPlayerSingleton } from "@/core/trackPlayer";
 import MusicList from "@/components/base/MusicList";
+import ListSearchBar from "@/components/base/ListSearchBar";
 import Cover from "@/components/base/Cover";
-import { IconPlay } from "@/components/base/Icons";
+import { IconPlay, IconSearch } from "@/components/base/Icons";
+import { useListSearch } from "@/hooks/useListSearch";
 
 /** 专辑详情页：getAlbumInfo 分页加载 */
 export default function AlbumDetailPage() {
@@ -20,6 +22,10 @@ export default function AlbumDetailPage() {
     const [page, setPage] = useState(1);
     const [loading, setLoading] = useState(true);
     const [loadingMore, setLoadingMore] = useState(false);
+
+    // 局部搜索：对已加载部分按 歌名/歌手/专辑 过滤
+    const search = useListSearch(musicList);
+    const viewList = search.active ? search.filtered : musicList;
 
     useEffect(() => {
         getPlugins().then(setPlugins);
@@ -104,10 +110,10 @@ export default function AlbumDetailPage() {
                         <button
                             className="btn primary"
                             onClick={() => {
-                                if (musicList.length) {
+                                if (viewList.length) {
                                     TrackPlayerSingleton.playWithReplacePlayList(
-                                        TrackPlayerSingleton.pickPlayAllStart(musicList),
-                                        musicList,
+                                        TrackPlayerSingleton.pickPlayAllStart(viewList),
+                                        viewList,
                                         listId,
                                         true,
                                     );
@@ -118,9 +124,19 @@ export default function AlbumDetailPage() {
                             <IconPlay size={16} />
                             <span>播放全部</span>
                         </button>
+                        <button
+                            className="btn ghost"
+                            disabled={!musicList.length}
+                            onClick={() => search.setOpen(true)}
+                        >
+                            <IconSearch size={15} />
+                            <span>搜索</span>
+                        </button>
                     </div>
                 </div>
             </div>
+
+            {search.open && <ListSearchBar search={search} />}
 
             {loading ? (
                 <div className="page-loading">
@@ -128,7 +144,7 @@ export default function AlbumDetailPage() {
                 </div>
             ) : (
                 <MusicList
-                    musicList={musicList}
+                    musicList={viewList}
                     listId={listId}
                     onLoadMore={loadMore}
                     loadingMore={loadingMore}

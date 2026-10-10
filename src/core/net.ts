@@ -106,15 +106,27 @@ export async function netFetchText(url: string, timeoutMs = 30000): Promise<stri
 }
 
 /**
+ * http 直链升级为 https。页面源是 https://localhost，WebView 会把 <audio> 加载的
+ * http 媒体当混合内容拦截（Electron 桌面端没有这层限制，同一插件会出现
+ * 桌面能播、Pad 不能播）。网易等 CDN 的签名直链换 https 依然有效；
+ * 个别只支持 http 的源由播放失败回退（trackPlayer）+ allowMixedContent 兜底。
+ */
+export function upgradeToHttps(url: string): string {
+    return url.startsWith("http://") ? `https://${url.slice("http://".length)}` : url;
+}
+
+/**
  * 构造 <audio> 可用的播放地址：
- *  - 直链无特殊请求头：原样返回（媒体元素加载跨域资源不受 CORS 限制）；
+ *  - 直链无特殊请求头：升级 https 后返回（媒体元素加载跨域资源不受 CORS 限制）；
  *  - 直链带请求头（Referer / UA / Cookie）：浏览器无法给 <audio> 塞头，
- *    配了伴生代理时走 `/media` 转发；没配就只能原样试（部分源不带头也能放）。
+ *    配了伴生代理时走 `/media` 转发；没配就只能原样试（部分源不带头也能放）；
+ *  - insecure：跳过 https 升级，回退原始 http 直链时用。
  */
 export function buildPlayableMediaUrl(payload: {
     url: string;
     headers?: Record<string, string>;
     userAgent?: string;
+    insecure?: boolean;
 }): string {
     const { url } = payload;
     const headers: Record<string, string> = { ...(payload.headers ?? {}) };
@@ -128,7 +140,7 @@ export function buildPlayableMediaUrl(payload: {
             JSON.stringify(headers),
         )}`;
     }
-    return url;
+    return payload.insecure ? url : upgradeToHttps(url);
 }
 
 /** 测试伴生代理连通性 */

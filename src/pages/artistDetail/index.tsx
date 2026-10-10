@@ -4,9 +4,12 @@ import { tryPluginMethod } from "@/core/pluginUtils";
 import { pickSourcePlugins, useGlobalSource } from "@/core/mediaSource";
 import { getPlugins } from "@/core/ipc";
 import MusicList from "@/components/base/MusicList";
+import ListSearchBar from "@/components/base/ListSearchBar";
 import SheetCardGrid from "@/components/base/SheetCardGrid";
 import Cover from "@/components/base/Cover";
 import { navigate } from "@/core/router";
+import { IconSearch } from "@/components/base/Icons";
+import { useListSearch } from "@/hooks/useListSearch";
 
 /** 歌手详情页：getArtistWorks，单曲/专辑两个标签 */
 export default function ArtistDetailPage() {
@@ -21,6 +24,10 @@ export default function ArtistDetailPage() {
     const [page, setPage] = useState(1);
     const [loading, setLoading] = useState(true);
     const [loadingMore, setLoadingMore] = useState(false);
+
+    // 局部搜索：仅单曲 tab 的已加载部分按 歌名/歌手/专辑 过滤
+    const search = useListSearch(musicList);
+    const viewList = search.active ? search.filtered : musicList;
 
     useEffect(() => {
         getPlugins().then(setPlugins);
@@ -133,7 +140,18 @@ export default function ArtistDetailPage() {
                         专辑
                     </button>
                 </div>
+                {worksType === "music" && (
+                    <button
+                        className="btn ghost small"
+                        disabled={!musicList.length}
+                        onClick={() => search.setOpen(true)}
+                    >
+                        <IconSearch size={14} />
+                        <span>搜索</span>
+                    </button>
+                )}
             </div>
+            {worksType === "music" && search.open && <ListSearchBar search={search} />}
 
             {loading ? (
                 <div className="page-loading">
@@ -141,7 +159,7 @@ export default function ArtistDetailPage() {
                 </div>
             ) : worksType === "music" ? (
                 <MusicList
-                    musicList={musicList}
+                    musicList={viewList}
                     listId={`artist:${artistItem.platform}-${artistItem.id}`}
                     onLoadMore={worksType === "music" ? loadMore : undefined}
                     loadingMore={loadingMore}

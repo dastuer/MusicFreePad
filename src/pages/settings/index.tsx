@@ -33,6 +33,11 @@ import {
     type IWebdavConfig,
 } from "@/core/dav";
 import { isNative } from "@/core/native";
+import {
+    isAndroidNative,
+    isBatteryOptimizationIgnored,
+    requestIgnoreBatteryOptimizations,
+} from "@/core/mediaNotification";
 import { showToast } from "@/core/uiAtoms";
 
 /** 设置：外观 / 播放 / 网络 / 备份（本地文件、URL、WebDAV，与桌面端互通） */
@@ -48,6 +53,27 @@ export default function SettingsPage() {
     const fileRef = useRef<HTMLInputElement | null>(null);
 
     const native = isNative();
+    const androidNative = isAndroidNative();
+    // 电池优化白名单状态（仅安卓）：从系统弹窗回来时靠 visibilitychange 刷新
+    const [batteryIgnored, setBatteryIgnored] = useState<boolean | null>(null);
+    useEffect(() => {
+        if (!androidNative) {
+            return undefined;
+        }
+        let alive = true;
+        const refresh = () =>
+            isBatteryOptimizationIgnored().then((v) => {
+                if (alive) {
+                    setBatteryIgnored(v ?? null);
+                }
+            });
+        refresh();
+        document.addEventListener("visibilitychange", refresh);
+        return () => {
+            alive = false;
+            document.removeEventListener("visibilitychange", refresh);
+        };
+    }, [androidNative]);
     const [dav, setDav] = useState<IWebdavConfig>(() => getWebdavConfig());
     const [davTestMsg, setDavTestMsg] = useState<string | null>(null);
     const [davLastUpload, setDavLastUpload] = useState<number | null>(() =>
@@ -203,6 +229,32 @@ export default function SettingsPage() {
                         <span className="switch-slider" />
                     </label>
                 </div>
+                {androidNative && (
+                    <div
+                        className="settings-row"
+                        onClick={() => {
+                            if (batteryIgnored) {
+                                showToast("已忽略电池优化，后台播放更稳定");
+                                return;
+                            }
+                            void requestIgnoreBatteryOptimizations().then(() =>
+                                isBatteryOptimizationIgnored().then((v) =>
+                                    setBatteryIgnored(v ?? null),
+                                ),
+                            );
+                        }}
+                    >
+                        <div className="settings-label">
+                            后台播放保活
+                            <div className="settings-label-sub">
+                                加入电池优化白名单，避免熄屏后系统限网导致播放断流
+                            </div>
+                        </div>
+                        <div className="settings-label">
+                            {batteryIgnored === null ? "" : batteryIgnored ? "已开启" : "未开启"}
+                        </div>
+                    </div>
+                )}
             </section>
 
             <section className="settings-section">

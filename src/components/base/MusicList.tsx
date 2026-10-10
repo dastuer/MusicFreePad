@@ -6,16 +6,17 @@ import {
     useCurrentMusic,
     useMusicState,
 } from "@/core/trackPlayer";
-import { openMusicActions } from "@/core/uiAtoms";
+import { openMusicActions, openAddToSheet } from "@/core/uiAtoms";
 import { toggleLike, isLikedMusic, likesVersionAtom } from "@/core/musicSheet";
 import { navigate } from "@/core/router";
 import { formatSeconds } from "@/core/utils";
-import { IconHeart, IconMore, IconPlaying } from "./Icons";
+import { IconCheck, IconHeart, IconMore, IconPlaying } from "./Icons";
 
 /**
  * 歌曲列表（Pad 形态）：序号/播放中动画、封面、歌名+歌手、专辑（宽屏）、时长、红心、更多。
  * 渐进渲染（每次 150 行），点行整队替换播放。
  * 传入 onLoadMore 后滚动到底部自动加载下一页。
+ * 多选态（selectMode）：序号位变勾选圈，点行切换勾选，行尾操作按钮隐藏。
  */
 
 const RENDER_STEP = 150;
@@ -34,6 +35,9 @@ export default function MusicList({
     loadingMore = false,
     isEnd = true,
     showEndHint = true,
+    selectMode = false,
+    selectedKeys,
+    onToggleSelect,
 }: {
     musicList: IMusic.IMusicItem[];
     listId: string;
@@ -44,6 +48,9 @@ export default function MusicList({
     loadingMore?: boolean;
     isEnd?: boolean;
     showEndHint?: boolean;
+    selectMode?: boolean;
+    selectedKeys?: Set<string>;
+    onToggleSelect?: (item: IMusic.IMusicItem) => void;
 }) {
     const currentMusic = useCurrentMusic();
     const musicState = useMusicState();
@@ -171,6 +178,10 @@ export default function MusicList({
     const visible = musicList.slice(0, visibleCount);
 
     const onRowClick = (item: IMusic.IMusicItem) => {
+        if (selectMode) {
+            onToggleSelect?.(item);
+            return;
+        }
         TrackPlayerSingleton.playWithReplacePlayList(item, musicList, listId);
     };
 
@@ -196,6 +207,10 @@ export default function MusicList({
                 });
             },
         });
+        actions.push({
+            label: "收藏到歌单",
+            onClick: () => openAddToSheet([item]),
+        });
         if (item.albumId !== undefined) {
             actions.push({
                 label: "查看专辑",
@@ -207,6 +222,20 @@ export default function MusicList({
                             title: item.album,
                             artwork: item.artwork,
                             artist: item.artist,
+                        },
+                    }),
+            });
+        }
+        if (item.artistId !== undefined) {
+            actions.push({
+                label: "查看歌手",
+                onClick: () =>
+                    navigate("artistDetail", {
+                        artistItem: {
+                            id: item.artistId,
+                            platform: item.platform,
+                            name: item.artist,
+                            avatar: item.artwork,
                         },
                     }),
             });
@@ -231,14 +260,19 @@ export default function MusicList({
                 const isCurrent =
                     currentMusic?.id === item.id && currentMusic?.platform === item.platform;
                 const liked = likedSet.has(`${item.platform}-${item.id}`);
+                const checked = selectMode && !!selectedKeys?.has(`${item.platform}-${item.id}`);
                 return (
                     <div
                         key={`${item.platform}-${item.id}-${idx}`}
-                        className={`music-row ${isCurrent ? "current" : ""}`}
+                        className={`music-row ${isCurrent ? "current" : ""} ${checked ? "selected" : ""}`}
                         onClick={() => onRowClick(item)}
                     >
                         <div className="music-row-index">
-                            {isCurrent && musicState === "playing" ? (
+                            {selectMode ? (
+                                <span className={`row-check ${checked ? "checked" : ""}`}>
+                                    <IconCheck size={12} />
+                                </span>
+                            ) : isCurrent && musicState === "playing" ? (
                                 <IconPlaying size={16} />
                             ) : showIndex ? (
                                 <span className="row-num">{idx + 1}</span>
@@ -254,41 +288,45 @@ export default function MusicList({
                         </div>
                         <div className="music-row-album">{item.album}</div>
                         <div className="music-row-actions">
-                            <button
-                                className={`icon-btn like-btn ${liked ? "liked" : ""}`}
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    const nowLiked = toggleLike(item);
-                                    setLikedSet((prev) => {
-                                        const next = new Set(prev);
-                                        if (nowLiked) {
-                                            next.add(`${item.platform}-${item.id}`);
-                                        } else {
-                                            next.delete(`${item.platform}-${item.id}`);
-                                        }
-                                        return next;
-                                    });
-                                }}
-                                title={liked ? "取消喜欢" : "喜欢"}
-                            >
-                                <IconHeart size={17} filled={liked} />
-                            </button>
-                            <span className="music-row-duration">
-                                {formatSeconds(item.duration)}
-                            </span>
-                            <button
-                                className="icon-btn"
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    openMusicActions({
-                                        musicItem: item,
-                                        actions: buildActions(item),
-                                    });
-                                }}
-                                title="更多操作"
-                            >
-                                <IconMore size={17} />
-                            </button>
+                            {!selectMode && (
+                                <>
+                                    <button
+                                        className={`icon-btn like-btn ${liked ? "liked" : ""}`}
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            const nowLiked = toggleLike(item);
+                                            setLikedSet((prev) => {
+                                                const next = new Set(prev);
+                                                if (nowLiked) {
+                                                    next.add(`${item.platform}-${item.id}`);
+                                                } else {
+                                                    next.delete(`${item.platform}-${item.id}`);
+                                                }
+                                                return next;
+                                            });
+                                        }}
+                                        title={liked ? "取消喜欢" : "喜欢"}
+                                    >
+                                        <IconHeart size={17} filled={liked} />
+                                    </button>
+                                    <span className="music-row-duration">
+                                        {formatSeconds(item.duration)}
+                                    </span>
+                                    <button
+                                        className="icon-btn"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            openMusicActions({
+                                                musicItem: item,
+                                                actions: buildActions(item),
+                                            });
+                                        }}
+                                        title="更多操作"
+                                    >
+                                        <IconMore size={17} />
+                                    </button>
+                                </>
+                            )}
                         </div>
                     </div>
                 );
