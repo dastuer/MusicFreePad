@@ -13,17 +13,32 @@ import {
 } from "@/core/musicSheet";
 import { getMusicHistory, type HistoryItem } from "@/core/musicHistory";
 import { navigate } from "@/core/router";
+import { downloadsVersionAtom, getDownloadedMusicList } from "@/core/musicDownload";
+import { localMusicVersionAtom, getLocalMusicCount, localMusicPlatform } from "@/core/localMusic";
 import { openPrompt, openMusicActions, showToast } from "@/core/uiAtoms";
 import { TrackPlayerSingleton } from "@/core/trackPlayer";
 import MusicList from "@/components/base/MusicList";
 import Cover from "@/components/base/Cover";
-import { IconPlay, IconPlus, IconMore } from "@/components/base/Icons";
+import {
+    IconChevronRight,
+    IconDownload,
+    IconFolderMusic,
+    IconHistory,
+    IconPlay,
+    IconPlus,
+    IconMore,
+} from "@/components/base/Icons";
 
 /** 我的音乐：喜欢的音乐 + 自建歌单（卡片墙）+ 最近在听 */
 export default function MyMusicPage() {
     const sheetsVersion = useAtomValue(sheetsVersionAtom);
     const [sheets, setSheets] = useState<IUserSheet[]>([]);
     const [recent, setRecent] = useState<HistoryItem[]>([]);
+    // 下载记录 / 本地曲库数量（各自版本号变化时刷新）
+    const downloadsVersion = useAtomValue(downloadsVersionAtom);
+    const localVersion = useAtomValue(localMusicVersionAtom);
+    const [downloadsCount, setDownloadsCount] = useState(0);
+    const [localCount, setLocalCount] = useState(0);
 
     useEffect(() => {
         ensureLikesSheet();
@@ -34,11 +49,59 @@ export default function MyMusicPage() {
         setRecent(getMusicHistory().slice(0, 12));
     }, []);
 
+    useEffect(() => {
+        void downloadsVersion;
+        setDownloadsCount(getDownloadedMusicList().length);
+    }, [downloadsVersion]);
+
+    useEffect(() => {
+        void localVersion;
+        setLocalCount(getLocalMusicCount());
+    }, [localVersion]);
+
+    const showNativeEntries = localMusicPlatform() !== "web";
+
     const likes = sheets.find((it) => it.id === LIKES_SHEET_ID);
     const userSheets = sheets.filter((it) => it.id !== LIKES_SHEET_ID);
 
     return (
         <div className="page-inner my-music">
+            {/* 我的下载 / 本地音乐（原生环境） */}
+            <div className="mine-list">
+                <div className="mine-row" onClick={() => navigate("downloads")}>
+                    <span className="m-icon">
+                        <IconDownload size={20} />
+                    </span>
+                    <span className="mine-row-label">我的下载</span>
+                    <span className="mine-row-extra">{downloadsCount || ""}</span>
+                    <span className="chevron">
+                        <IconChevronRight size={17} />
+                    </span>
+                </div>
+                {showNativeEntries && (
+                    <div className="mine-row" onClick={() => navigate("localMusic")}>
+                        <span className="m-icon">
+                            <IconFolderMusic size={20} />
+                        </span>
+                        <span className="mine-row-label">本地音乐</span>
+                        <span className="mine-row-extra">{localCount || ""}</span>
+                        <span className="chevron">
+                            <IconChevronRight size={17} />
+                        </span>
+                    </div>
+                )}
+                <div className="mine-row" onClick={() => navigate("history")}>
+                    <span className="m-icon">
+                        <IconHistory size={20} />
+                    </span>
+                    <span className="mine-row-label">播放历史</span>
+                    <span className="mine-row-extra">{recent.length || ""}</span>
+                    <span className="chevron">
+                        <IconChevronRight size={17} />
+                    </span>
+                </div>
+            </div>
+
             {/* 我喜欢的音乐 大卡片 */}
             {likes && (
                 <div
@@ -174,11 +237,7 @@ export default function MyMusicPage() {
                             全部
                         </button>
                     </div>
-                    <MusicList
-                        musicList={recent}
-                        listId="history-recent"
-                        showIndex={false}
-                    />
+                    <MusicList musicList={recent} listId="history-recent" />
                 </>
             )}
         </div>

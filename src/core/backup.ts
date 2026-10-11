@@ -127,6 +127,7 @@ const PREF_KEYS = [
     "playList",
     "currentMusic",
     "defaultPluginHash",
+    "manualPluginHash",
     "searchHistory",
     "playProgress",
     "rememberProgress",
@@ -466,6 +467,10 @@ export async function importBackupFromWebdav(mode: ResumeMode = getResumeMode())
 
 /** 从 URL 恢复 */
 export async function importBackupFromUrl(url: string, mode: ResumeMode = getResumeMode()) {
+    // 仅收备份文件后缀：防误把任意网页当备份恢复，把全部偏好洗掉
+    if (!/\.(json|txt)(\?.*)?$/i.test(url)) {
+        throw new Error("仅支持 .json / .txt 结尾的备份链接");
+    }
     const content = await netFetchText(url, 60000);
     const { summary } = await restoreBackup(content, mode);
     return { summary };

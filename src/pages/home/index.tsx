@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useAtomValue } from "jotai";
 import { homeTabAtom } from "@/core/uiAtoms";
-import { getPlugins, type SerializedPlugin } from "@/core/ipc";
+import { getPlugins, pluginsVersionAtom, type SerializedPlugin } from "@/core/ipc";
 import { pickSourcePlugins, useGlobalSource } from "@/core/mediaSource";
 import { tryPluginMethod } from "@/core/pluginUtils";
 import SheetCardGrid, { SheetCard } from "@/components/base/SheetCardGrid";
@@ -132,9 +132,11 @@ function SheetsTab({ tab }: { tab: "recommend" | "sheets" }) {
         return () => ro.disconnect();
     }, [chipsVisible, measureTagRows]);
 
+    // 首页是常驻页：插件安装/卸载/启停后重新拉取，新音源无需重启即可用
+    const pluginsVersion = useAtomValue(pluginsVersionAtom);
     useEffect(() => {
         getPlugins().then(setPlugins);
-    }, []);
+    }, [pluginsVersion]);
 
     // 音源变化时重拉标签（标签决定第一页歌单）
     useEffect(() => {
@@ -378,9 +380,11 @@ function TopListTab() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
+    // 首页是常驻页：插件安装/卸载/启停后重新拉取，新音源无需重启即可用
+    const pluginsVersion = useAtomValue(pluginsVersionAtom);
     useEffect(() => {
         getPlugins().then(setPlugins);
-    }, []);
+    }, [pluginsVersion]);
 
     useEffect(() => {
         if (!plugins) {

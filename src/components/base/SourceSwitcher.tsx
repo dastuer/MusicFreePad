@@ -12,8 +12,8 @@ import { IconChevronDown, IconMusic } from "./Icons";
  * 全局音源切换器（只挂在顶栏，所有页面共用同一个全局音源）：
  *  - method 为当前页面需要的插件能力，决定菜单里列出哪些音源；
  *    纯本地页面传 null，不显示切换器；
- *  - 手动切换只对本次运行生效，App 重启后恢复为默认音源（音源插件页「设为默认」）；
- *  - 「自动」= 没有默认音源时按插件排序逐个降级尝试。
+ *  - 手动切换持久化保存，重启后依然有效；选回默认音源或「自动」即清除；
+ *  - 「自动」= 没有音源选择时按插件排序逐个降级尝试。
  */
 export default function SourceSwitcher({ method }: { method?: string | null }) {
     const globalSource = useGlobalSource();
@@ -87,7 +87,7 @@ export default function SourceSwitcher({ method }: { method?: string | null }) {
             >
                 <IconMusic size={13} />
                 <span className="source-switcher-label">{label}</span>
-                {isOverride && <span className="source-switcher-dot" title="本次运行有效" />}
+                {isOverride && <span className="source-switcher-dot" title="手动指定，长期有效" />}
                 <IconChevronDown size={13} />
             </button>
             {open && (
@@ -114,23 +114,16 @@ export default function SourceSwitcher({ method }: { method?: string | null }) {
                         >
                             {p.name}
                             {p.hash === defaultHash && <span className="ss-badge">默认</span>}
-                            {globalSource === p.hash && isOverride && (
-                                <span className="ss-badge session">本次有效</span>
-                            )}
                         </div>
                     ))}
                     {!plugins.length && (
                         <div className="source-switcher-empty">没有音源支持当前页面</div>
                     )}
-                    <div className="source-switcher-hint">
-                        {unsupportedHere
-                            ? "当前音源不支持本页，数据来自其他音源"
-                            : isOverride
-                              ? "手动切换仅本次运行有效，重启后恢复默认音源"
-                              : defaultHash === AUTO_SOURCE
-                                ? "未设置默认音源，可在「音源插件」页设为默认"
-                                : "当前使用默认音源，手动切换仅本次运行有效"}
-                    </div>
+                    {unsupportedHere && (
+                        <div className="source-switcher-hint">
+                            当前音源不支持本页，数据来自其他音源
+                        </div>
+                    )}
                 </div>
             )}
         </div>

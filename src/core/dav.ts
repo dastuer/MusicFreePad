@@ -1,4 +1,4 @@
-import { hasNativeHttp, nativeHttpRequest } from "./native";
+import { davHttpRequest, hasDavHttp, hasNativeHttp, nativeHttpRequest } from "./native";
 import { relayRequest } from "./net";
 
 /**
@@ -6,9 +6,11 @@ import { relayRequest } from "./net";
  *
  * 与桌面端 WebDAV 备份同通道：同一个 NAS / Nextcloud / 坚果云 账号即可互传备份。
  * 传输策略（按顺序选择可用的）：
- *  1. 原生应用：CapacitorHttp 直连（无跨域限制）；
- *  2. 配置了伴生代理：走代理 /relay（代理在电脑上代发，同样无跨域限制）；
- *  3. 浏览器直连：要求 WebDAV 服务端支持 CORS（Nextcloud / Alist 大多支持）。
+ *  1. Android 原生：DavHttp 插件（OkHttp）直连——CapacitorHttp 底层
+ *     HttpURLConnection 不认 PROPFIND / MKCOL 等 WebDAV 方法；
+ *  2. iOS 原生：CapacitorHttp 直连（NSURLSession，无跨域限制、支持任意方法）；
+ *  3. 配置了伴生代理：走代理 /relay（代理在电脑上代发，同样无跨域限制）；
+ *  4. 浏览器直连：要求 WebDAV 服务端支持 CORS（Nextcloud / Alist 大多支持）。
  *
  * 认证：HTTP Basic（覆盖 Nextcloud、Alist、坚果云应用密码等绝大多数场景）。
  */
@@ -120,7 +122,24 @@ async function davRequest(
     };
     const timeoutMs = options?.timeoutMs ?? 30000;
 
-    // 1) 原生 HTTP：无跨域、支持任意方法
+    // 1) Android：DavHttp 插件（OkHttp）。CapacitorHttp 的 Android 底层
+    //    HttpURLConnection 只认 8 个标准方法，PROPFIND / MKCOL 会抛
+    //    "Expected one of [...] but was PROPFIND"，必须绕开它
+    if (hasDavHttp()) {
+        try {
+            return await davHttpRequest({
+                url,
+                method,
+                headers,
+                body: options?.body,
+                timeoutMs,
+            });
+        } catch (e: any) {
+            throw new Error(`WebDAV 请求失败：${e?.message ?? e}`);
+        }
+    }
+
+    // 2) 原生 HTTP（iOS 的 CapacitorHttp 基于 NSURLSession，支持任意方法；无跨域限制）
     if (hasNativeHttp()) {
         try {
             const res = await nativeHttpRequest({
@@ -136,7 +155,7 @@ async function davRequest(
         }
     }
 
-    // 2) 伴生代理
+    // 3) 伴生代理
     try {
         const res = await relayRequest(url, {
             method,
@@ -152,7 +171,7 @@ async function davRequest(
         }
     }
 
-    // 3) 浏览器直连（要求服务端支持 CORS）
+    // 4) 浏览器直连（要求服务端支持 CORS）
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(new Error("请求超时")), timeoutMs);
     try {
@@ -255,6 +274,14 @@ export async function uploadBackupToWebdav(content: string): Promise<{ remotePat
         setWebdavLastAt("upload");
         return { remotePath: cfg.filePath };
     }
+    if (res.status === 409) {
+        throw new Error(
+            "上传失败（409）：远端目录不存在，且该服务器不支持自动创建目录，请先在服务器上建好对应目录",
+        );
+    }
+    if (res.status === 401) {
+        throw new Error("上传失败：认证失败，检查用户名 / 密码");
+    }
     throw new Error(`上传失败（${res.status}）：检查账号权限与文件路径`);
 }
 
@@ -297,8 +324,16 @@ export async function checkWebdavBackupExists(): Promise<{
             timeoutMs: 15000,
         });
         if (res.status >= 200 && res.status < 300) {
-            const lastModified = res.headers["lastmodified"] ?? res.headers["last-modified"];
-            const size = Number(res.headers["contentlength"] ?? res.headers["content-length"]);
+            const lastModifiedHeader = res.headers["lastmodified"] ?? res.headers["last-modified"];
+            const sizeHeader = Number(res.headers["contentlength"] ?? res.headers["content-length"]);
+            // PROPFIND 的文件属性一般在 multistatus XML 里而不在响应头，头里没有就从 XML 兜底
+            const xml = res.text ?? "";
+            const lastModified =
+                lastModifiedHeader ??
+                xml.match(/<(?:[\w.]+:)?getlastmodified>\s*([^<]+?)\s*</i)?.[1];
+            const size = Number.isFinite(sizeHeader)
+                ? sizeHeader
+                : Number(xml.match(/<(?:[\w.]+:)?getcontentlength>\s*([^<]+?)\s*</i)?.[1]);
             return {
                 exists: true,
                 lastModified,

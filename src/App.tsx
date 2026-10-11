@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useCurrentRoute } from "@/core/router";
 import { TrackPlayerSingleton } from "@/core/trackPlayer";
 import { setupMediaNotification } from "@/core/mediaNotification";
+import { resumeSavedMatchTask } from "@/core/localMusic";
 import { pluginHost } from "@/core/ipc";
 import { useThemeSetup } from "@/core/theme";
 import { ensureLikesSheet } from "@/core/musicSheet";
@@ -24,6 +25,9 @@ import AlbumDetailPage from "@/pages/albumDetail";
 import ArtistDetailPage from "@/pages/artistDetail";
 import MyMusicPage from "@/pages/myMusic";
 import HistoryPage from "@/pages/history";
+import DownloadsPage from "@/pages/downloads";
+import LocalMusicPage from "@/pages/localMusic";
+import FolderSelectPage from "@/pages/folderSelect";
 import PluginManagePage from "@/pages/pluginManage";
 import SettingsPage from "@/pages/settings";
 
@@ -57,6 +61,12 @@ function renderPage(path: string, params: Record<string, any>) {
             return <MyMusicPage />;
         case "history":
             return <HistoryPage />;
+        case "downloads":
+            return <DownloadsPage />;
+        case "localMusic":
+            return <LocalMusicPage />;
+        case "folderSelect":
+            return <FolderSelectPage key={`folder:${params.mode}`} mode={params.mode ?? "single"} />;
         case "pluginManage":
             return <PluginManagePage />;
         case "settings":
@@ -77,6 +87,10 @@ export default function App() {
         TrackPlayerSingleton.setup();
         // 系统媒体通知（Android 下拉栏媒体卡片；仅原生环境生效）
         setupMediaNotification();
+        // 上次没跑完的本地音乐匹配任务（应用退出即中断）：启动时自动续跑
+        void resumeSavedMatchTask().catch((e: any) =>
+            console.warn("[app] 恢复本地匹配任务失败", e),
+        );
     }, []);
 
     return (

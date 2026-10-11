@@ -1,7 +1,8 @@
 import { atom, getDefaultStore, useAtomValue } from "jotai";
 import EventEmitter from "eventemitter3";
 import { buildPlayableMediaUrl, upgradeToHttps } from "./net";
-import { getPluginByMedia, pluginCall } from "./ipc";
+import { getPluginByMedia, getPlugins, pluginCall } from "./ipc";
+import { localFileUrl } from "./native";
 import { setMusicHistory } from "./musicHistory";
 import { getQuality, setQuality, getConfig, getAllowCoPlay } from "./appConfig";
 import { lookupCachedSrc, requestAudioCacheStore } from "./audioCache";
@@ -63,11 +64,6 @@ const MAX_HISTORY = 50;
 /** 「记忆播放进度」的最小起播位置 / 结尾间隔（与桌面端 playProgress 同规则） */
 const MIN_REMEMBER_POSITION = 5;
 const END_GAP = 5;
-
-/** 共播模式下被抢焦点后的续播延迟（等对方的焦点请求落定再回抢） */
-const CO_PLAY_RESUME_DELAY = 300;
-/** 续播冷却：15 秒内只回抢一次，对方再抢就让位，免得两边来回抢占打架 */
-const CO_PLAY_RESUME_COOLDOWN = 15000;
 
 /**
  * 队列里认一首歌用的键。与 `musicSheet` 的 `mediaKey` 同一约定。
@@ -188,6 +184,42 @@ function resolveQualityLadder(first: IMusic.IQualityKey): IMusic.IQualityKey[] {
     return ladder.slice(0, 3);
 }
 
+/** 音质序号（低→高），未知档位按 -1；下载去重与降档重试的档位比较都走这里 */
+export function qualityRank(q: IMusic.IQualityKey): number {
+    return QUALITY_LADDER.indexOf(q);
+}
+
+/** 从某档起逐级往低的音质序列（下载失败降档重试用）：[first, ..., "low"] */
+export function qualityLadderDown(first: IMusic.IQualityKey): IMusic.IQualityKey[] {
+    const idx = Math.max(0, QUALITY_LADDER.indexOf(first));
+    return QUALITY_LADDER.slice(0, idx + 1).reverse();
+}
+
+/** ---------- 已下载歌曲的本地播放 ---------- */
+
+/** 已下载歌曲的本地音源：src 为 WebView 可播放的本地文件地址 */
+export interface IDownloadedLocalSource {
+    src: string;
+    /** 下载时实际落盘的音质档（null 表示拿不到） */
+    quality: IMusic.IQualityKey | null;
+}
+
+/**
+ * 已下载歌曲的本地音源解析器（由 musicDownload 模块注册，避免循环依赖）：
+ * 播放器解析音源前先问它，本曲已有可播放的下载文件就直接播本地，
+ * 不再走插件解析线上直链。返回 null 表示没有本地文件（未下载 / 已被删除）。
+ */
+let downloadedSourceResolver:
+    | ((musicItem: IMusic.IMusicItem) => Promise<IDownloadedLocalSource | null>)
+    | null = null;
+
+export function setDownloadedSourceResolver(
+    fn: (musicItem: IMusic.IMusicItem) => Promise<IDownloadedLocalSource | null>,
+) {
+    downloadedSourceResolver = fn;
+}
+
+
 /** ---------- jotai atoms ---------- */
 export const DEFAULT_VOLUME = 0.8;
 
@@ -307,12 +339,16 @@ class TrackPlayer extends EventEmitter {
     private probeAudio: HTMLAudioElement | null = null;
     /** 在途切换的序号：换歌 / 再次切换时用它作废旧预取 */
     private qualitySwitchSeq = 0;
+    /** 当前播放是否来自「已下载的本地文件」：失败兜底与音质切换按 localPath 同规则处理 */
+    private playedFromLocalDownload = false;
+    /** 本地下载文件播放失败过的歌（本次会话内直接走线上，不再反复撞同一个坏文件） */
+    private localDownloadBypass = new Set<string>();
     /** 接下来的一次 pause 事件是应用主动发起的（区别于系统抢音频焦点打断） */
     private internalPausePending = false;
-    /** 主动暂停的序号：共播续播定时器靠它识别「用户在延迟窗口里按了暂停」 */
+    /** 用户主动暂停了（播放键 / 通知栏 / 耳机）：共播回抢据此让位，换歌时清零 */
+    private userPaused = false;
+    /** 主动暂停的序号：标记共播回抢发生过的会话序号 */
     private userPauseSeq = 0;
-    /** 上次共播续播的时间点，冷却期内不再回抢 */
-    private lastCoPlayResumeAt = 0;
 
     setup() {
         if (this.audio) {
@@ -549,6 +585,9 @@ class TrackPlayer extends EventEmitter {
         if (this.isLoading) {
             return;
         }
+        if (internal) {
+            this.userPaused = true;
+        }
         if (this._currentMusic) {
             setAtom(musicStateAtom, "paused");
         }
@@ -560,40 +599,37 @@ class TrackPlayer extends EventEmitter {
 
     /**
      * 共播模式下被抢了音频焦点（其他应用开播把 WebView 的播放暂停了）：
-     * 稍等对方落定后原地续播。冷却期内再被抢就让位，免得两边来回抢占。
+     * 在 pause 事件里同步立即 audio.play() 回抢。
+     *
+     * 必须同步调、且每次都回抢：页面在后台时定时器会被内核强节流（已暂停的页面
+     * 最密 1 次/分钟），「延迟续播」在刷抖音这种前台应用场景下根本不会按时跑；
+     * 而只要让位一次，我们就成了暂停态——没有焦点可丢、不再有 pause 事件，
+     * 没有任何机制能再次触发续播，音乐就永久停了。音频焦点只是建议性的，
+     * 系统本来就允许两个流混音，回抢即可共存（真机 WebView 138 实测：暂停→
+     * 立即 play 全部成功，音频与对方同时出声）。
+     *
+     * 回抢是静默的：不翻 UI 播放态、不刷媒体通知，避免焦点拉锯时界面抖动。
+     * 用户主动暂停（暂停键/通知栏/换歌）走 internalPausePending，不进这里。
      */
     private maybeResumeAfterFocusLoss() {
         const audio = this.audio;
         if (
             !getAllowCoPlay()
+            || this.userPaused
             || !audio
             || !this._currentMusic
             || !audio.src
             || audio.ended
             || audio.error
             || this.reconnecting
-            || Date.now() - this.lastCoPlayResumeAt < CO_PLAY_RESUME_COOLDOWN
+            || this.qualityRetrying
+            || this.insecureRetrying
         ) {
             return;
         }
-        this.lastCoPlayResumeAt = Date.now();
-        const audioAtSchedule = audio;
-        const pauseSeqAtSchedule = this.userPauseSeq;
-        setTimeout(() => {
-            // 延迟窗口里用户自己按了暂停 / 换了歌 / 出错了就不再续
-            if (
-                this.audio === audioAtSchedule
-                && this.userPauseSeq === pauseSeqAtSchedule
-                && this._currentMusic
-                && audioAtSchedule.paused
-                && !audioAtSchedule.ended
-                && !audioAtSchedule.error
-            ) {
-                audioAtSchedule.play().catch((e) => {
-                    console.warn("[trackPlayer] 共播续播失败", e?.name ?? e);
-                });
-            }
-        }, CO_PLAY_RESUME_DELAY);
+        audio.play().catch((e) => {
+            console.warn("[trackPlayer] 共播回抢失败", e?.name ?? e);
+        });
     }
 
     private onAudioPlay = () => {
@@ -637,7 +673,7 @@ class TrackPlayer extends EventEmitter {
         if (!audio || !src || !music || this.reconnecting) {
             return false;
         }
-        if (music.localPath) {
+        if (music.localPath || this.playedFromLocalDownload) {
             return false;
         }
         if (this.reconnectCount >= MAX_STREAM_RECONNECT) {
@@ -791,6 +827,17 @@ class TrackPlayer extends EventEmitter {
         const retryPosition = this.audio?.currentTime || 0;
         const failedSrc = this.audio?.src || "";
         this.detachAudio();
+
+        // 本地下载文件播放失败（文件损坏 / WebView 读不了等）：从失败位置改走线上音源，
+        // 并把这首记进 bypass，本次会话内不再反复尝试本地
+        if (this.playedFromLocalDownload) {
+            this.playedFromLocalDownload = false;
+            this.localDownloadBypass.add(playListKey(musicItem));
+            console.warn(`[trackPlayer] 本地下载文件播放失败（${reason}），改走线上音源`);
+            this.pendingStartPosition = retryPosition;
+            await this.play(musicItem, true, this.isInPlayList(musicItem));
+            return;
+        }
 
         // https 升级后的直链加载失败：回退原始 http 直链重试一次
         // （WebView 的 allowMixedContent 兜底，覆盖只支持 http 的音源）。
@@ -949,6 +996,32 @@ class TrackPlayer extends EventEmitter {
         return this._playList.findIndex(
             (it) => it.id === musicItem.id && it.platform === musicItem.platform,
         );
+    }
+
+    /**
+     * 播放期间曲目的展示元数据被外部更新（本地音乐匹配到歌词 / 封面）时同步进来：
+     * 替换当前曲目与队列里的同曲目条目并落盘，不影响音频播放。
+     * currentMusic 换新对象还会驱动播放页重载歌词。
+     */
+    updateMusicItemMeta(item: IMusic.IMusicItem) {
+        const sameKey = (a?: IMusic.IMusicItem | null) =>
+            !!a && a.id === item.id && a.platform === item.platform;
+        let touched = false;
+        if (sameKey(this._currentMusic)) {
+            this._currentMusic = { ...this._currentMusic!, ...item };
+            setAtom(currentMusicAtom, this._currentMusic);
+            touched = true;
+        }
+        if (this.getMusicIndexInPlayList(item) >= 0) {
+            this._playList = this._playList.map((it) =>
+                it.id === item.id && it.platform === item.platform ? { ...it, ...item } : it,
+            );
+            setAtom(playListAtom, this._playList);
+            touched = true;
+        }
+        if (touched) {
+            this.persistPlayList();
+        }
     }
 
     isInPlayList(musicItem?: IMusic.IMusicItem | null) {
@@ -1112,20 +1185,73 @@ class TrackPlayer extends EventEmitter {
 
     /** ---------- 播放控制 ---------- */
 
-    /** 解析可播放音源。音质按 resolveQualityLadder 从请求档逐级下降尝试。 */
-    private async resolveMediaUrl(
+    /**
+     * 解析可播放音源。音质按 resolveQualityLadder 从请求档逐级下降尝试。
+     * 找不到可用音源时返回带人话原因的失败（插件缺失 / 被禁用 / 挂载失败是恢复备份后最常见的几种）。
+     * 除播放外，下载模块也用它取直链（source.url 原始地址 + 自定义请求头）。
+     * 本地音乐（带 localPath）不走插件，直接转 WebView 可访问的文件地址。
+     * 已下载的歌（下载记录里有可播放文件）同样优先播本地：经 musicDownload 注册的
+     * 解析器拿本地地址，不再请求线上；下载取直链时传 ignoreLocalDownload 跳过这层。
+     */
+    async resolveMediaUrl(
         musicItem: IMusic.IMusicItem,
         qualityOverride?: IMusic.IQualityKey,
         excludeUrl?: string,
-    ): Promise<{
-        src: string;
-        source?: IPlugin.IMediaSourceResult;
-        quality: IMusic.IQualityKey | null;
-        /** src 是从 http 直链升级的 https（失败时可回退原始链接） */
-        httpUpgraded: boolean;
-    } | null> {
-        const plugin = await getPluginByMedia(musicItem);
-        if (plugin?.supportedMethods.includes("getMediaSource")) {
+        opts?: { ignoreLocalDownload?: boolean },
+    ): Promise<
+        | {
+              ok: true;
+              src: string;
+              source?: IPlugin.IMediaSourceResult;
+              quality: IMusic.IQualityKey | null;
+              /** src 是从 http 直链升级的 https（失败时可回退原始链接） */
+              httpUpgraded: boolean;
+              /** 音源来自下载到本机的文件（播放失败兜底与音质切换按 localPath 同规则处理） */
+              localDownload?: true;
+          }
+        | { ok: false; reason: string }
+    > {
+        if (musicItem.localPath) {
+            return {
+                ok: true,
+                src: localFileUrl(musicItem.localPath),
+                source: { url: musicItem.localPath },
+                quality: null,
+                httpUpgraded: false,
+            };
+        }
+        // 已下载的歌直接播本地文件：断网可播、秒开、不耗流量（插件缺失也不影响）
+        if (!opts?.ignoreLocalDownload && !this.localDownloadBypass.has(playListKey(musicItem))) {
+            const local = await downloadedSourceResolver?.(musicItem);
+            if (local) {
+                return {
+                    ok: true,
+                    src: local.src,
+                    quality: local.quality,
+                    httpUpgraded: false,
+                    localDownload: true,
+                };
+            }
+        }
+        const plugins = await getPlugins();
+        const samePlatform = plugins.filter((p) => p.platform === musicItem.platform);
+        if (!samePlatform.length) {
+            return {
+                ok: false,
+                reason: `未找到平台「${musicItem.platform}」的音源插件，请先安装（备份恢复后在插件管理里确认）`,
+            };
+        }
+        const plugin = samePlatform.find((p) => p.enabled && p.state === "Mounted");
+        if (!plugin) {
+            const broken = samePlatform[0];
+            return {
+                ok: false,
+                reason: !broken.enabled
+                    ? `音源「${broken.platform}」已被禁用，请在插件管理里启用`
+                    : `音源「${broken.platform}」未能加载（${broken.errorReason ?? "未知原因"}），请更新或重装插件`,
+            };
+        }
+        if (plugin.supportedMethods.includes("getMediaSource")) {
             const requested =
                 qualityOverride ??
                 pickSupportedQuality(getQuality(), musicItem.qualities) ??
@@ -1158,6 +1284,7 @@ class TrackPlayer extends EventEmitter {
                             insecure: this.insecureRetrying,
                         });
                         return {
+                            ok: true,
                             src,
                             source,
                             quality,
@@ -1174,10 +1301,11 @@ class TrackPlayer extends EventEmitter {
         }
         if (musicItem.url) {
             if (musicItem.url === excludeUrl) {
-                return null;
+                return { ok: false, reason: "没有可用的直链" };
             }
             const src = buildPlayableMediaUrl({ url: musicItem.url, insecure: this.insecureRetrying });
             return {
+                ok: true,
                 src,
                 source: { url: musicItem.url },
                 quality: null,
@@ -1187,7 +1315,7 @@ class TrackPlayer extends EventEmitter {
                     src === upgradeToHttps(musicItem.url),
             };
         }
-        return null;
+        return { ok: false, reason: "音源没有返回可播放的链接" };
     }
 
     private async updateMediaSession(musicItem: IMusic.IMusicItem) {
@@ -1284,6 +1412,7 @@ class TrackPlayer extends EventEmitter {
         if (isNew) {
             this.stallNudges = 0;
             this.pendingStartPosition = 0;
+            this.userPaused = false;
             if (addToPlayList && !this.isInPlayList(target)) {
                 this.add(target);
             }
@@ -1315,8 +1444,8 @@ class TrackPlayer extends EventEmitter {
             if (this.pendingPlayId !== playId) {
                 return;
             }
-            if (!resolved) {
-                await this.handlePlayFailure(target, "音源没有返回可播放的链接", {
+            if (!resolved.ok) {
+                await this.handlePlayFailure(target, resolved.reason, {
                     allowQualityRetry: false,
                 });
                 return;
@@ -1324,13 +1453,14 @@ class TrackPlayer extends EventEmitter {
             this.resolvedQuality = resolved.quality;
             this.resolvedSourceUrl = resolved.source?.url ?? null;
             this.resolvedHttpUpgraded = resolved.httpUpgraded;
+            this.playedFromLocalDownload = !!resolved.localDownload;
             setAtom(playingQualityAtom, resolved.quality);
             const audio = this.audio;
             if (!audio) {
                 return;
             }
             let playSrc = resolved.src;
-            if (!target.localPath) {
+            if (!target.localPath && !resolved.localDownload) {
                 // 播放缓存：命中直接读本地（秒开、省流量、断网可重听）；
                 // 未命中先在线播，同时后台整首缓存，下次播放走本地
                 const cached = await lookupCachedSrc(target, resolved.quality);
@@ -1370,6 +1500,7 @@ class TrackPlayer extends EventEmitter {
         if (!audio) {
             return;
         }
+        this.userPaused = false;
         if (!audio.src) {
             if (this._currentMusic) {
                 this.play(this._currentMusic, true);
@@ -1396,6 +1527,7 @@ class TrackPlayer extends EventEmitter {
             // 只有真的在播才有 pause 事件，标记也别留到下一次外部暂停上
             this.internalPausePending = true;
         }
+        this.userPaused = true;
         audio?.pause();
         setAtom(musicStateAtom, "paused");
     }
@@ -1592,17 +1724,19 @@ class TrackPlayer extends EventEmitter {
         setAtom(qualitySwitchingAtom, targetQuality);
 
         try {
-            // excludeUrl：插件常拿同一个直链糊弄不同音质，换个 URL 才算真换
+            // excludeUrl：插件常拿同一个直链糊弄不同音质，换个 URL 才算真换；
+            // 已下载本地播放的曲子没有「目标音质的另一份文件」，切换只记偏好，走 ignoreLocalDownload
             const resolved = await this.resolveMediaUrl(
                 musicItem,
                 targetQuality,
                 this.resolvedSourceUrl ?? undefined,
+                { ignoreLocalDownload: true },
             );
             if (isStale()) {
                 return { status: "cancelled" };
             }
-            if (!resolved) {
-                return { status: "failed", reason: "这个音质没有独立音源" };
+            if (!resolved.ok) {
+                return { status: "failed", reason: resolved.reason };
             }
 
             probe = new Audio();
@@ -1804,7 +1938,7 @@ class TrackPlayer extends EventEmitter {
         setAtom(qualityAtom, quality);
         const music = this._currentMusic;
         const audio = this.audio;
-        if (!music || music.localPath || !audio?.src) {
+        if (!music || music.localPath || this.playedFromLocalDownload || !audio?.src) {
             return { status: "queued" };
         }
         if (audio.paused) {
@@ -1891,9 +2025,29 @@ export function useCurrentLyric() {
 
 export const currentLyricAtom = atom<ILyric.IParsedLrc>([]);
 
+/**
+ * 本地歌曲歌词解析器（由 localMusic 模块注册，避免循环依赖）：
+ * 播放列表/历史里的本地条目可能早于匹配结果，播时向曲库现查一次
+ */
+let localLyricResolver: ((musicItem: IMusic.IMusicItem) => Promise<string>) | null = null;
+export function setLocalLyricResolver(fn: (musicItem: IMusic.IMusicItem) => Promise<string>) {
+    localLyricResolver = fn;
+}
+
 /** 加载当前歌曲歌词（插件接口名与桌面端一致：getLyric） */
 export async function loadCurrentLyric(musicItem: IMusic.IMusicItem) {
     let lyricSource: ILyric.ILyricSource | null = musicItem.lyric ?? null;
+    if (!lyricSource && musicItem.localPath) {
+        // 本地歌曲：播放列表/历史里存的条目可能没有随匹配结果更新，向本地曲库现查歌词
+        try {
+            const raw = await localLyricResolver?.(musicItem);
+            if (raw) {
+                lyricSource = { rawLrc: raw };
+            }
+        } catch {
+            // ignore
+        }
+    }
     if (!lyricSource && !musicItem.localPath) {
         const plugin = await getPluginByMedia(musicItem);
         if (plugin?.supportedMethods.includes("getLyric")) {

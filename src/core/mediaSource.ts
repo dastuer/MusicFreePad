@@ -5,17 +5,17 @@ import type { SerializedPlugin } from "./ipc";
  * 全局统一音源：
  *  - 默认音源（defaultPluginHash）持久化到 localStorage，由插件管理页「设为默认」维护；
  *    设置后全局音源立即切换为该音源。
- *  - 手动切换（顶栏的音源切换器）只改内存里的会话覆盖，整个 App 立即统一切到新音源，
- *    下次 App 关闭后自然失效，重新恢复为默认音源。
+ *  - 手动切换（顶栏的音源切换器）同样持久化到 localStorage，整个 App 立即统一切到新音源，
+ *    重启后依然生效；在菜单里选回默认音源或「自动」即清除手动选择。
  *  - 都没有时为「自动」：按插件管理页的排序（默认音源优先）逐个降级尝试。
  */
 
 export const AUTO_SOURCE = "auto";
 
 const DEFAULT_KEY = "defaultPluginHash";
+const MANUAL_KEY = "manualPluginHash";
 
-/** 本次运行的手动选择。只在内存里，App 关闭即消失。 */
-let sessionSource: string | null = null;
+/** 手动选择持久化在 localStorage；与默认音源相同时视为未手动选择。 */
 
 /** 旧版按页面存音源（pageSource.<page>），统一后作废，启动时清掉。 */
 function cleanupLegacyPageSources() {
@@ -38,36 +38,48 @@ export function getDefaultSource(): string {
     return localStorage.getItem(DEFAULT_KEY) || AUTO_SOURCE;
 }
 
-/** 当前生效的全局音源：本次手动选择 > 默认音源 > 自动 */
+/** 手动选择（持久化，重启后依然生效）；没有时返回 null。 */
+export function getManualSource(): string | null {
+    try {
+        return localStorage.getItem(MANUAL_KEY);
+    } catch {
+        return null;
+    }
+}
+
+/** 当前生效的全局音源：手动选择 > 默认音源 > 自动 */
 export function getGlobalSource(): string {
-    return sessionSource ?? getDefaultSource();
+    return getManualSource() ?? getDefaultSource();
 }
 
 /**
- * 手动切换全局音源（仅本次运行有效）。
- * 传 AUTO / 空值等于清除手动选择，回到默认音源。
+ * 手动切换全局音源（持久化，长期有效）。
+ * 传 AUTO / 空值 / 默认音源等于清除手动选择，回到默认音源。
  */
 export function setSessionSource(hash?: string | null) {
-    if (!hash || hash === AUTO_SOURCE || hash === getDefaultSource()) {
-        sessionSource = null;
-    } else {
-        sessionSource = hash;
+    try {
+        if (!hash || hash === AUTO_SOURCE || hash === getDefaultSource()) {
+            localStorage.removeItem(MANUAL_KEY);
+        } else {
+            localStorage.setItem(MANUAL_KEY, hash);
+        }
+    } catch {
+        // ignore
     }
     syncAtom();
 }
 
-/** 设置默认音源：持久化，并让全局音源立即切到它（清掉本次的手动选择）。 */
+/** 设置默认音源：持久化，并让全局音源立即切到它（清掉手动选择）。 */
 export function setDefaultSource(hash: string) {
     if (hash && hash !== AUTO_SOURCE) {
         localStorage.setItem(DEFAULT_KEY, hash);
     } else {
         localStorage.removeItem(DEFAULT_KEY);
     }
-    sessionSource = null;
-    syncAtom();
+    setSessionSource(null);
 }
 
-/** 清除默认音源：全局音源回到「自动」。 */
+/** 清除默认音源：全局音源回到手动选择（若有）或「自动」。 */
 export function clearDefaultSource() {
     localStorage.removeItem(DEFAULT_KEY);
     syncAtom();

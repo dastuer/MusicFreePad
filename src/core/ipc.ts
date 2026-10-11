@@ -1,5 +1,6 @@
 /** 渲染层与插件宿主的桥（对齐桌面端 src/core/ipc.ts 的对外 API） */
 
+import { atom, getDefaultStore } from "jotai";
 import { pluginHost } from "./pluginHost";
 import type { SerializedPlugin } from "./pluginHost";
 
@@ -41,7 +42,14 @@ export async function getPlugins(refresh = false): Promise<SerializedPlugin[]> {
 
 export function invalidatePluginCache() {
     cachedPlugins = [];
+    // 插件集合版本号：安装/卸载/启停/恢复备份后自增，
+    // 常驻页面（首页等）据此重新拉取插件列表，新音源无需重启即可用
+    const store = getDefaultStore();
+    store.set(pluginsVersionAtom, store.get(pluginsVersionAtom) + 1);
 }
+
+/** 插件集合版本号（invalidatePluginCache 时自增；useAtomValue 订阅） */
+export const pluginsVersionAtom = atom(0);
 
 /**
  * 同步读插件列表缓存（尚未加载时为空数组）。

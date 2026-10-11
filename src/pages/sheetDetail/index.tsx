@@ -271,6 +271,8 @@ export default function SheetDetailPage() {
                     {multi.selectMode && (
                         <SelectActionsBar
                             count={multi.selected.length}
+                            onDownload={multi.startDownload}
+                            downloading={multi.downloading}
                             onCollect={multi.startCollect}
                             onDelete={
                                 userSheetId ? () => multi.startDelete(removeFromSheet) : undefined

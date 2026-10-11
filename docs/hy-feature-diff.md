@@ -103,11 +103,12 @@
 - **Hy 实现**:`core/trackPlayer.ts:55-56`(MAX_STREAM_RECONNECT=2)、`669-706` tryReconnectStream(同一直链重挂+断点续播)、`708-721` onAudioError 对错误码 2 先重连再走失败链
 - **Pad 现状**:onAudioError(`Pad: core/trackPlayer.ts:521-528`)一律直接进「降级→跳歌」失败链;stalled 微调 3 次后直接放弃(`487-489`),Hy 是救不回再触发重连(`566-569`)
 
-#### 10. [x] 共播模式 / 音频焦点自愈(2026-10-11 已完成)
+#### 10. [x] 共播模式 / 音频焦点自愈(2026-10-11 已完成;同日修正回抢策略)
 
-- **Hy 实现**:`core/trackPlayer.ts:68-71`(续播延迟 300ms/冷却 15s)、`580-595` onAudioPause 区分主动暂停 vs 系统抢焦点、`601-633` maybeResumeAfterFocusLoss(被抢焦点后延迟回抢)、`1902-1917` applyCoPlaySessionType(Audio Session API 设 ambient,feature-detect)
+- **Hy 实现**:`core/trackPlayer.ts` onAudioPause 区分主动暂停 vs 系统抢焦点、maybeResumeAfterFocusLoss(被抢焦点后回抢)、applyCoPlaySessionType(Audio Session API 设 ambient,feature-detect)
 - 依赖 appConfig 的 `allowCoPlay`(`Hy: core/appConfig.ts:28-35`)+ 设置开关(`Hy: settings/index.tsx:196-208`)
 - **Pad 状态**:onAudioPause(`499-507`)无任何焦点处理;appConfig 无 allowCoPlay
+- **回抢策略修正(真机实测)**:初版的「延迟 300ms 续播 + 15s 冷却让位」在真机上失效——后台页面的定时器被内核强节流(已暂停的页面最密 1 次/分钟),延迟续播根本不跑;且让位一次后就成了暂停态,不再有 pause 事件,音乐永久停死。现改为:被抢焦点的 pause 事件里**同步立即 `audio.play()` 静默回抢**(刚在播的元素被外部焦点暂停后,同步回放不受自动播放策略限制,WebView 138 实测全部成功),不翻 UI/不刷通知;新增 `userPaused` 标记,用户主动暂停(播放键/通知栏/耳机)才真正让位,换歌/恢复播放时清零
 
 #### 11. [x] 单曲循环无缝化(2026-10-11 已完成)
 
@@ -147,7 +148,7 @@
 
 ### 第三批:大块功能(建议各自作为独立里程碑)
 
-#### 17. [ ] 歌曲下载体系
+#### 17. [x] 歌曲下载体系（2026-10-11 已完成，见「六、已完成记录」）
 
 - **Hy 实现**(约 3800 行,最大的一块):
   - `core/musicDownload.ts`(1643 行):并发下载队列(5 并发,`77-131/230/1536-1555`)、任务落盘重启恢复为暂停(`125-227`)、入队去重/高音质覆盖(`1121-1164`)、失败降档重试(`1384-1491`)、「不倒退」校验(`1436-1455`)、三种拉流通道(原生直落磁盘 `735-818` → 分块 Range 令牌桶限流 `881-1013` → 伴生代理回退 `1310-1318`)、保存位置+子文件夹(`522-597`)、**已下载的歌优先播本地文件**(`332-399`,经 `setDownloadedSourceResolver` 注册进 trackPlayer)、删除+清 .part(`401-520/670-709`)、批量下载静默汇总(`1095-1119/1181-1206`)
@@ -159,7 +160,7 @@
 - **Pad 状态**:完全缺失;设置页也需加「下载 → 保存位置」入口(Hy: `settings/index.tsx:251-265`)
 - **提示**:若只想先要「离线可播」,第 7 项音频缓存能覆盖大半需求,可先行
 
-#### 18. [ ] 本地音乐扫描与曲库
+#### 18. [x] 本地音乐扫描与曲库（2026-10-11 已完成）
 
 - **Hy 实现**:
   - `core/localMusic.ts`(1582 行):曲库记录 ILocalMusicRecord(含码率/采样率/封面/匹配歌词路径,`72-108`)、扫描目录默认跟随下载保存位置(`276-338`)、Android 原生 LocalMusicPlugin 扫描(`448-452`,依赖 Hy 原生工程里的 `LocalMusicPlugin.java` + `StoragePlugin.java` + MediaStore 权限)/**iOS Filesystem 遍历 + audio 探测时长(`496-705`)**、权限申请(`387-399`)、**匹配歌词与封面**(逐首插件搜索打分,编辑距离 `1112-1134`、选优 `1165-1199`,落盘到 match_meta `1260-1328`)、任务可暂停/续跑/进程被杀自动恢复(`759-1001`)、单曲「获取封面歌词」(`1450-1486`)、删除(可选连文件,`1506-1555`)
@@ -170,28 +171,28 @@
 
 ### 顺手小项(成本低,可随批次搭车)
 
-#### 19. [ ] 插件管理页增强
+#### 19. [x] 插件管理页增强（2026-10-11 已完成）
 
 - Hy 有而 Pad 无:插件详情底部面板 PluginDetailSheet(作者/平台标识/运行状态/描述/来源链接复制/插件指纹复制/支持能力标签/用户变量展示,`Hy: pages/pluginManage/index.tsx:39-142`)、拖拽排序(`149-265,342-356,457-482`)、**取消默认音源**按钮(`227-230,370-379`,Pad 目前设了默认就无法取消)
 - Pad 已有且不同:用户变量 openPrompt 批量编辑(Pad 更顺手)、更新流程区分 installed/updated/unchanged(Pad 更细)、已启用统计条(Pad 有)——保持
 
-#### 20. [ ] 插件装卸后首页热更新
+#### 20. [x] 插件装卸后首页热更新（2026-10-11 已完成）
 
 - **Hy**:`usePluginsVersion()` 监听(`Hy: pages/home/index.tsx:253-256,379-383`)
 - **Pad**:getPlugins 仅挂载拉一次(`Pad: pages/home/index.tsx:135-137`),装/卸插件后要手动刷新
 
-#### 21. [ ] 音源解析失败原因人话化
+#### 21. [x] 音源解析失败原因人话化（2026-10-11 已完成）
 
 - **Hy**:resolveMediaUrl 返回 `{ok:false, reason}`,`core/trackPlayer.ts:1194-1211` 区分「插件未安装/已被禁用/挂载失败」
 - **Pad**:返回 null,统一一句「音源没有返回可播放的链接」(`1042`),函数私有(若做下载体系,此函数需导出复用)
 - 另:单次解析超时 Hy 15s(`:50`)、Pad 10s(`:46`)
 
-#### 22. [ ] WebDAV 安卓兼容加固
+#### 22. [x] WebDAV 安卓兼容加固（2026-10-11 已完成，走法与 Hy 不同）
 
 - **Hy**:`core/dav.ts` 处理 Android CapacitorHttp 发不出 PROPFIND/MKCOL 等扩展方法:方法白名单(`91-95`)、errText 解析(`106-114`)、`needsStandardMethodOnly`(`116-122`)、davRequest 原生分支回退(`165-181`)、ensureDirectory 跳过 MKCOL(`226-252`)、testWebdav 回退 GET(`269-305`)、checkWebdavBackupExists 多方法回退(`361-397`)、409/401 错误细化(`327-335`)、WebDAV 子页有「上次上传+上次下载」时间戳
 - **Pad**:`dav.ts`(312 行)仅 PROPFIND,无任何安卓兼容处理 —— Pad 若常跑安卓,值得整体同步
 
-#### 23. [ ] 备份恢复体验小补
+#### 23. [x] 备份恢复体验小补（2026-10-11 已完成）
 
 - 恢复偏好后立即生效:Hy 恢复后调 `notifyDefaultPluginHashChanged/notifyGlobalSourceChanged`(`Hy: core/backup.ts:184-192`);Pad 只写 localStorage 靠 reload(可保留 Pad 的 reload 方案,二选一)
 - 恢复失败点名音源及原因:Hy `describeResumeSummary`(`Hy: core/backup.ts:522-533`)
@@ -298,3 +299,19 @@
 - 与 Pad 特有功能的合并点:http→https 升级回退链(resolvedHttpUpgraded/insecureRetrying)与重连/降级链共存——重连失败才进 handlePlayFailure,回退链顺序不动;断流重连不救 localPath 与本地下载。
 
 验证:tsc / vite build / assembleDebug 全过(Java 含新 StoragePlugin)。音频缓存三通道、断流重连、焦点自愈的真机行为待平板实测。
+
+### [x] 第三批：大块功能与顺手小项（2026-10-11，清单 16-23）
+
+落地内容(Pad)：
+
+- **歌曲下载体系(17)**：新增 `core/musicDownload.ts`(与 Hy 同款：5 并发队列、任务落盘重启恢复为暂停、入队去重/高音质覆盖、拉流失败自动降档重试、「不倒退」校验、三通道拉流——原生直落磁盘 → 分块 Range 令牌桶限流 → 伴生代理回退；`LocalMusic.getDefaultDirs` 一律改为 Pad 的 `Storage.getDefaultDirs`)；`native.ts` 补 `nativeDownloadFile/nativeCancelDownload`(Android 走 Storage 插件)；trackPlayer 接 `setDownloadedSourceResolver` 注册机制、`playedFromLocalDownload`/`localDownloadBypass` 播坏回退、断流重连跳过本地下载。UI：新增「我的下载」页(总进度条+暂停/继续/停止/重试失败/清除失败+任务行与记录行统一列表+局部搜索+多选)、`hooks/useDownloadsMultiSelect.ts`、文件夹选择页(folderSelect, single 模式选下载目录/multi 模式选扫描目录,含「所有文件访问」授权引导、可写探针、新建文件夹、滚动位置记忆、返回键优先回上级)；MusicList 融合下载菜单项(已下载音质对比提示)/任务行(灰底进度+失败重试)/`removeActionLabel`/`extraActions`/`renderAll`；NowPlaying 更多菜单「下载」；`useMusicMultiSelect` 补批量下载；SelectActionsBar(批量 1 已预留 onDownload)接线。设置页「下载 → 保存位置」入口；myMusic 页「我的下载」入口行。
+- **本地音乐(18)**：新增 `core/localMusic.ts`(与 Hy 同款曲库：内存缓存+防抖落盘、默认扫描目录跟随下载保存位置、Android LocalMusicPlugin 扫描/iOS Filesystem 遍历+audio 探时长、匹配歌词与封面逐首搜索打分、任务可暂停/续跑/进程被杀自动恢复、单曲详情)；「本地音乐」页(播放全部/多选/局部搜索/扫描面板/匹配面板/详情弹窗)；myMusic 页「本地音乐」入口行；App 启动恢复未完成匹配任务。
+  - 原生侧：新增 `LocalMusicPlugin.java`(MediaStore+目录遍历+标签/内嵌封面，删除走 MediaStore createDeleteRequest+MainActivity.onActivityResult 回传)；`StoragePlugin.java` 升级为 Hy 全量版(权限/浏览/可写探针/mkdir/直落下载 downloadFile+cancelDownload，getDefaultDirs 补 documents/downloads)；AndroidManifest 补 READ_MEDIA_AUDIO / MANAGE_EXTERNAL_STORAGE / requestLegacyExternalStorage。
+- **元数据热更新(16)**：trackPlayer 补 `updateMusicItemMeta`(匹配到歌词/封面后同步当前歌与队列并落盘)与 `setLocalLyricResolver`(历史/歌单里的本地条目播时现查歌词)。
+- **插件管理页增强(19)**：新增 PluginDetailSheet(作者/平台标识/运行状态/描述/来源链接与指纹复制/支持能力标签/用户变量)；卡片左侧手柄指针拖拽排序(与播放队列面板同款实现，非 @dnd-kit)；「取消默认」按钮(设了默认可取消，回到按插件顺序自动选择)；保持 Pad 的用户变量批量编辑/更新流程/已启用统计条。
+- **首页热更新(20)**：`ipc.ts` 加 `pluginsVersionAtom`(invalidatePluginCache 时自增)，首页订阅后装/卸插件即重拉，无需重启。
+- **解析失败人话化(21)**：`resolveMediaUrl` 改返回 `{ok:false,reason}`，区分「未安装插件/已被禁用/未能加载(带原因)」；单次解析超时仍 10s(Pad 现值)。
+- **WebDAV 安卓加固(22)**：走法与 Hy 的「标准方法回退」不同——新增 `DavHttpPlugin.java`(OkHttp，绕开 CapacitorHttp 底层 HttpURLConnection 只认 8 个标准方法的限制，PROPFIND/MKCOL 真正可用)，`dav.ts` Android 原生通道优先(iOS 走 CapacitorHttp 本就支持任意方法)；checkWebdavBackupExists 补 multistatus XML 兜底取 lastModified/size；上传 409/401 错误细化；设置页补「上次恢复」时间戳。手动音源切换改为持久化(与文档原文不同，超出清单的顺手调整)：`mediaSource.ts` manualPluginHash 落 localStorage，SourceSwitcher 文案同步。
+- **备份恢复小补(23)**：从 URL 恢复仅收 .json/.txt 后缀；备份白名单补 manualPluginHash；「恢复后立即生效」保留 Pad 的 reload 方案(文档二选一)；describeResumeSummary Pad 已有。
+
+验证：tsc / vite build / assembleDebug 全过(Java 含重写 StoragePlugin、新增 LocalMusicPlugin/DavHttpPlugin)，APK 内已确认打入新 web 包。下载三通道、本地音乐扫描/匹配、文件夹选择的真机行为待平板实测。

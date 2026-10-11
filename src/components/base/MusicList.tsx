@@ -5,12 +5,27 @@ import {
     TrackPlayerSingleton,
     useCurrentMusic,
     useMusicState,
+    qualityRank,
 } from "@/core/trackPlayer";
-import { openMusicActions, openAddToSheet } from "@/core/uiAtoms";
+import { openMusicActions, openAddToSheet, openSingleSelect } from "@/core/uiAtoms";
 import { toggleLike, isLikedMusic, likesVersionAtom } from "@/core/musicSheet";
 import { navigate } from "@/core/router";
 import { formatSeconds } from "@/core/utils";
-import { IconCheck, IconHeart, IconMore, IconPlaying } from "./Icons";
+import {
+    downloadMusic,
+    getDownloadRecord,
+    QUALITY_LABEL,
+    downloadTasksAtom,
+    retryDownloadTask,
+    type IDownloadTask,
+} from "@/core/musicDownload";
+import {
+    IconCheck,
+    IconHeart,
+    IconMore,
+    IconPlaying,
+    IconRefresh,
+} from "./Icons";
 
 /**
  * 歌曲列表（Pad 形态）：序号/播放中动画、封面、歌名+歌手、专辑（宽屏）、时长、红心、更多。
@@ -25,10 +40,93 @@ const TOUCH_MOVE_THRESHOLD = 8;
 /** 手指抬起后仍处于惯性滚动时（最近一次滚动事件在该窗口内），吞掉 click（“点一下停住滚动”不应选中歌曲） */
 const RECENT_SCROLL_WINDOW = 300;
 
+/** 行级下载任务态：taskRowOf 对某行返回非空时该行渲染为下载任务行 */
+export interface IMusicListTaskRow {
+    taskKey: string;
+}
+
+/** 下载任务行实时内容：自行订阅任务队列，进度刷新只重渲染本行 */
+function DownloadTaskRowLive({
+    taskKey,
+    item,
+    index,
+    showIndex,
+}: {
+    taskKey: string;
+    item: IMusic.IMusicItem;
+    index: number;
+    showIndex: boolean;
+}) {
+    const task: IDownloadTask | undefined = useAtomValue(downloadTasksAtom).find(
+        (t) => t.key === taskKey,
+    );
+    if (!task) {
+        // 任务刚被移除、列表结构尚未重建的过渡帧
+        return null;
+    }
+    const failed = task.status === "error";
+    const base = item.artist ? `${item.artist} - ${item.title}` : item.title;
+    const subText =
+        task.status === "pending"
+            ? `${base} · 排队等待`
+            : task.status === "downloading"
+              ? `${base} · 正在下载`
+              : task.status === "paused"
+                ? `${base} · 已暂停`
+                : `${base} · 下载失败`;
+    // 灰底条：封面等高，宽度按下载进度从满收窄到 0
+    const frac = failed
+        ? 1
+        : task.progress >= 0
+          ? (100 - Math.min(100, Math.max(0, task.progress))) / 100
+          : 1;
+    const pct = !failed && task.progress >= 0 ? Math.round(task.progress) : undefined;
+    return (
+        <div className={`music-row dl-task-row ${failed ? "failed" : ""}`}>
+            <div
+                className="dl-task-mask"
+                style={{ width: `calc((100% - 56px) * ${frac.toFixed(4)})` }}
+            />
+            <div className="music-row-index">
+                {showIndex ? <span className="row-num">{index + 1}</span> : null}
+            </div>
+            <div className="music-row-cover-wrap" style={{ position: "relative" }}>
+                <Cover src={item.artwork} size={44} radius={6} className="music-row-cover" />
+                {failed && (
+                    <button
+                        className="icon-btn dl-task-retry"
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            retryDownloadTask(task.key);
+                        }}
+                        title="重试下载"
+                        style={{ position: "absolute", inset: 0 }}
+                    >
+                        <IconRefresh size={18} />
+                    </button>
+                )}
+            </div>
+            <div className="music-row-info">
+                <div className="music-row-title">{item.title}</div>
+                <div className="music-row-sub">{subText}</div>
+            </div>
+            <div className="music-row-album">{item.album}</div>
+            <div className="music-row-actions">
+                {pct !== undefined && <span className="dl-task-pct">{pct}%</span>}
+            </div>
+        </div>
+    );
+}
+
 export default function MusicList({
     musicList,
     listId,
     onRemoveItem,
+    removeActionLabel = "移出本列表",
+    hideDownload = false,
+    taskRowOf,
+    extraActions,
+    renderAll = false,
     showIndex = true,
     className = "",
     onLoadMore,
@@ -42,6 +140,20 @@ export default function MusicList({
     musicList: IMusic.IMusicItem[];
     listId: string;
     onRemoveItem?: (item: IMusic.IMusicItem) => void;
+    /** 行尾「移出」菜单项文案（下载页「删除下载记录」/ 本地音乐页「删除本地音乐」） */
+    removeActionLabel?: string;
+    /** 隐藏「下载」菜单项（本地音乐 / 我的下载页没有下载意义） */
+    hideDownload?: boolean;
+    /** 行级下载任务：与已完成记录交织成统一列表时，由页面按歌曲返回任务态参数 */
+    taskRowOf?: (item: IMusic.IMusicItem) => IMusicListTaskRow | undefined;
+    /** 页面级自定义菜单项（本地音乐页「查看详情」等），插在移出项之前 */
+    extraActions?: (item: IMusic.IMusicItem) => {
+        label: string;
+        onClick: () => void;
+        danger?: boolean;
+    }[];
+    /** 分帧补齐到全部行数（不设 150 窗口上限），本地音乐全量展示用 */
+    renderAll?: boolean;
     showIndex?: boolean;
     className?: string;
     onLoadMore?: () => void;
@@ -68,6 +180,20 @@ export default function MusicList({
     useEffect(() => {
         setVisibleCount(RENDER_STEP);
     }, [listId]);
+
+    // renderAll：分帧补齐到全部行数（本地音乐列表上千行，一次性渲染会卡首帧）
+    useEffect(() => {
+        if (!renderAll || visibleCount >= musicList.length) {
+            return;
+        }
+        let raf = 0;
+        const step = () => {
+            setVisibleCount((c) => Math.min(c + RENDER_STEP, musicList.length));
+            raf = requestAnimationFrame(step);
+        };
+        raf = requestAnimationFrame(step);
+        return () => cancelAnimationFrame(raf);
+    }, [renderAll, musicList.length]);
 
     // 已喜欢的集合（一次性算好，红心不再逐行读 localStorage）
     useEffect(() => {
@@ -182,6 +308,10 @@ export default function MusicList({
             onToggleSelect?.(item);
             return;
         }
+        if (taskRowOf?.(item)) {
+            // 下载任务行点了不播放（还没下完）
+            return;
+        }
         TrackPlayerSingleton.playWithReplacePlayList(item, musicList, listId);
     };
 
@@ -240,9 +370,49 @@ export default function MusicList({
                     }),
             });
         }
+        // 本地歌曲没有线上音源可解析，任何列表里都不给下载入口
+        if (!hideDownload && item.platform !== "local") {
+            actions.push({
+                label: "下载",
+                onClick: () => {
+                    // 打开菜单时才查下载记录（不订阅记录版本，避免下载完成刷新整列表）；
+                    // 已下载标注与播放页下载音质面板同规则：同档/更低跳过、更高覆盖升级
+                    const existing = getDownloadRecord(item)?.quality;
+                    const qualities: IMusic.IQualityKey[] = [
+                        "standard",
+                        "high",
+                        "super",
+                        "low",
+                    ];
+                    openSingleSelect({
+                        title: "下载音质",
+                        options: qualities.map((q) => {
+                            let desc: string | undefined;
+                            if (existing) {
+                                const rank = qualityRank(q) - qualityRank(existing);
+                                if (rank < 0) {
+                                    desc = "已有更高音质，下载会跳过";
+                                } else if (rank === 0) {
+                                    desc = "已下载，重复下载会跳过";
+                                } else {
+                                    desc = "覆盖升级现有文件";
+                                }
+                            }
+                            return { value: q, label: QUALITY_LABEL[q], desc };
+                        }),
+                        onSelect: (v) => {
+                            downloadMusic(item, v as IMusic.IQualityKey);
+                        },
+                    });
+                },
+            });
+        }
+        for (const extra of extraActions?.(item) ?? []) {
+            actions.push(extra);
+        }
         if (onRemoveItem) {
             actions.push({
-                label: "移出本列表",
+                label: removeActionLabel,
                 danger: true,
                 onClick: () => onRemoveItem(item),
             });
@@ -257,6 +427,18 @@ export default function MusicList({
             onClickCapture={onClickCapture}
         >
             {visible.map((item, idx) => {
+                const taskRow = taskRowOf?.(item);
+                if (taskRow && !selectMode) {
+                    return (
+                        <DownloadTaskRowLive
+                            key={`task-${item.platform}-${item.id}-${idx}`}
+                            taskKey={taskRow.taskKey}
+                            item={item}
+                            index={idx}
+                            showIndex={showIndex}
+                        />
+                    );
+                }
                 const isCurrent =
                     currentMusic?.id === item.id && currentMusic?.platform === item.platform;
                 const liked = likedSet.has(`${item.platform}-${item.id}`);

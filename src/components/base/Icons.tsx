@@ -306,3 +306,62 @@ export const IconVolumeOff = ({ size = 20, strokeWidth = 1.8 }: IIconProps) => (
         <path d="m16 9 6 6" />
     </svg>
 );
+
+export const IconRefresh = ({ size = 22, strokeWidth = 1.8 }: IIconProps) => (
+    <svg {...base(size)} strokeWidth={strokeWidth}>
+        <path d="M20 12a8 8 0 1 1-2.3-5.6" />
+        <path d="M20 3v4h-4" />
+    </svg>
+);
+
+export const IconStop = ({ size = 22, strokeWidth = 1.8 }: IIconProps) => (
+    <svg {...base(size)} strokeWidth={strokeWidth}>
+        <rect x="7" y="7" width="10" height="10" rx="1.5" />
+    </svg>
+);
+
+/** 文件夹 + 音符（本地音乐入口） */
+export const IconFolderMusic = ({ size = 22, strokeWidth = 1.8 }: IIconProps) => (
+    <svg {...base(size)} strokeWidth={strokeWidth}>
+        <path d="M3.5 7a2 2 0 0 1 2-2h4.2l2 2.5h7.3a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2Z" />
+        <circle cx="10.2" cy="15.6" r="1.6" />
+        <path d="M11.8 15.6v-4.4l4-1v4.2" />
+        <circle cx="14.2" cy="14.6" r="1.6" />
+    </svg>
+);
+
+/** 普通文件夹（文件夹浏览列表） */
+export const IconFolder = ({ size = 22, strokeWidth = 1.8 }: IIconProps) => (
+    <svg {...base(size)} strokeWidth={strokeWidth}>
+        <path d="M3.5 7a2 2 0 0 1 2-2h4.2l2 2.5h7.3a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2Z" />
+    </svg>
+);
+
+/** 文件夹 + 加号（添加扫描目录） */
+export const IconFolderPlus = ({ size = 22, strokeWidth = 1.8 }: IIconProps) => (
+    <svg {...base(size)} strokeWidth={strokeWidth}>
+        <path d="M3.5 7a2 2 0 0 1 2-2h4.2l2 2.5h7.3a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2Z" />
+        <path d="M12 11v5M9.5 13.5h5" />
+    </svg>
+);
+
+/** 文件夹 + 放大镜（扫描本地音乐） */
+export const IconFolderSearch = ({ size = 22, strokeWidth = 1.8 }: IIconProps) => (
+    <svg {...base(size)} strokeWidth={strokeWidth}>
+        <path d="M12.6 18.5H5.5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h4.2l2 2.5h5.3a2 2 0 0 1 2 2v2.3" />
+        <circle cx="15.8" cy="15.8" r="3.6" />
+        <path d="M18.4 18.4L21 21" />
+    </svg>
+);
+
+export const IconChevronRight = ({ size = 22, strokeWidth = 2 }: IIconProps) => (
+    <svg {...base(size)} strokeWidth={strokeWidth}>
+        <path d="M9.5 5.5L16 12l-6.5 6.5" />
+    </svg>
+);
+
+export const IconDragHandle = ({ size = 22, strokeWidth = 1.8 }: IIconProps) => (
+    <svg {...base(size)} strokeWidth={strokeWidth}>
+        <path d="M9 6h.01M9 12h.01M9 18h.01M15 6h.01M15 12h.01M15 18h.01" />
+    </svg>
+);

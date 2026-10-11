@@ -2,8 +2,7 @@ import { atom, getDefaultStore, useAtomValue } from "jotai";
 
 /**
  * 简单栈式路由（与桌面端同构）：侧边栏常驻，路由只在主内容区切换。
- * 桌面端的 localMusic / downloading 在 Pad 版没有对应能力，去掉；
- * 新增 myMusic（我的音乐聚合页）。
+ * 新增 myMusic（我的音乐聚合页）；第三批补上 downloads / localMusic / folderSelect。
  */
 
 export type RoutePath =
@@ -16,6 +15,9 @@ export type RoutePath =
     | "topListDetail"
     | "myMusic"
     | "history"
+    | "downloads"
+    | "localMusic"
+    | "folderSelect"
     | "pluginManage"
     | "settings";
 

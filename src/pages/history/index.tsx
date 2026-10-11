@@ -81,6 +81,8 @@ export default function HistoryPage() {
                     {multi.selectMode && (
                         <SelectActionsBar
                             count={multi.selected.length}
+                            onDownload={multi.startDownload}
+                            downloading={multi.downloading}
                             onCollect={multi.startCollect}
                         />
                     )}

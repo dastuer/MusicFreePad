@@ -177,6 +177,59 @@ export async function callNativeMethod(
     return Cap.nativePromise(pluginName, methodName, options);
 }
 
+/* ---------- WebDAV 通道（DavHttp 插件） ---------- */
+
+/**
+ * WebDAV 请求是否走 DavHttp 原生插件（目前仅 Android）。
+ *
+ * CapacitorHttp 的 Android 底层是 HttpURLConnection，其 setRequestMethod 只认
+ * OPTIONS/GET/HEAD/POST/PUT/DELETE/TRACE/PATCH 八个标准方法，PROPFIND / MKCOL
+ * 一律抛 "Expected one of [...] but was PROPFIND"；OkHttp 的 method() 无白名单。
+ * iOS 的 CapacitorHttp 走 NSURLSession 本就支持任意方法，不需要这个插件。
+ */
+export function hasDavHttp(): boolean {
+    if (nativePlatform() !== "android") {
+        return false;
+    }
+    try {
+        const Cap = (window as any).Capacitor;
+        // 插件在原生侧注册，JS 侧的存根与清单由 bridge 注入，任一可见即可用；
+        // 两者都缺（旧 APK + 新 web 包）时回退 CapacitorHttp，标准方法仍可用
+        return !!(
+            Cap?.Plugins?.DavHttp ||
+            Cap?.PluginHeaders?.some?.((h: any) => h?.name === "DavHttp")
+        );
+    } catch {
+        return false;
+    }
+}
+
+/** DavHttp 单次请求（OkHttp，支持任意 HTTP 方法；仅在 hasDavHttp() 时调用） */
+export async function davHttpRequest(options: {
+    url: string;
+    method: string;
+    headers?: Record<string, string>;
+    body?: string;
+    timeoutMs?: number;
+}): Promise<INativeHttpResult> {
+    const res = await callNativeMethod("DavHttp", "request", {
+        url: options.url,
+        method: options.method.toUpperCase(),
+        headers: options.headers ?? {},
+        body: options.body ?? "",
+        timeoutMs: options.timeoutMs ?? 30000,
+    });
+    const headers: Record<string, string> = {};
+    for (const [k, v] of Object.entries(res?.headers ?? {})) {
+        headers[String(k).toLowerCase()] = Array.isArray(v) ? v.join(", ") : String(v);
+    }
+    return {
+        status: res?.status ?? 0,
+        headers,
+        text: typeof res?.text === "string" ? res.text : "",
+    };
+}
+
 /**
  * 设备本地文件路径 → WebView 能加载的地址（Capacitor 的 _capacitor_file_ 通道）。
  * 与 @capacitor/core 的 convertFileSrc 同规则（androidScheme 为 https，见 capacitor.config.ts）。
@@ -271,4 +324,83 @@ export function yieldToMainIfVisible(): Promise<void> {
         return Promise.resolve();
     }
     return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/* ---------- 原生直落磁盘下载（歌曲下载体系） ---------- */
+
+/**
+ * 直落磁盘下载的插件名：Android 复用 StoragePlugin，iOS 用独立的 DownloadPlugin。
+ * 两端语义对齐：流式写 destPath + ".part"（支持 Range 续传），进度经 downloadProgress
+ * 事件回传，成功后改名 destPath 并 resolve { path, size, contentType }。
+ */
+function downloadPluginName(): string {
+    return nativePlatform() === "ios" ? "Download" : "Storage";
+}
+
+export interface INativeDownloadResult {
+    path: string;
+    size: number;
+    /** 响应 Content-Type（扩展名推断用，部分服务器拿不到） */
+    contentType?: string;
+}
+
+/**
+ * 原生直落磁盘下载：HTTP 拉流 + 写盘整体在原生线程完成，下载字节完全不过 JS 桥，
+ * 5 路并发下载不再占用主线程。进度经 downloadProgress 事件按 taskId 过滤后透传
+ * （小 JSON，不构成桥接压力），节流由调用方处理（沿用 runTask 的 400ms patchTask 节流）。
+ *
+ * 中断走 nativeCancelDownload（保留 .part 供续传）；同 destPath 再次调用即断点续传。
+ * 插件/方法缺失（老 App 包）时 promise 拒绝，由调用方回退分块过桥路径。
+ */
+export function nativeDownloadFile(
+    taskId: string,
+    url: string,
+    headers: Record<string, string>,
+    destPath: string,
+    onProgress?: (loaded: number, total: number) => void,
+): Promise<INativeDownloadResult> {
+    return new Promise<INativeDownloadResult>((resolve, reject) => {
+        let settled = false;
+        // 事件监听先于请求注册：进度在 resolve/reject 后不再透传，并随调用结束解绑
+        const removeListener = addNativeListener(
+            downloadPluginName(),
+            "downloadProgress",
+            (data: any) => {
+                if (settled || !data || data.taskId !== taskId) {
+                    return;
+                }
+                onProgress?.(Number(data.loaded) || 0, Number(data.total) || 0);
+            },
+        );
+        const settle = (fn: () => void) => {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            removeListener();
+            fn();
+        };
+        callNativeMethod(downloadPluginName(), "downloadFile", { taskId, url, headers, destPath })
+            .then((res: any) => {
+                settle(() =>
+                    resolve({
+                        path: String(res?.path ?? destPath),
+                        size: Number(res?.size) || 0,
+                        contentType: res?.contentType ? String(res.contentType) : undefined,
+                    }),
+                );
+            })
+            .catch((e: any) => {
+                settle(() => reject(e));
+            });
+    });
+}
+
+/** 中断原生直落磁盘下载（保留 .part 供续传）；任务不存在 / 插件缺失均视为成功（幂等） */
+export async function nativeCancelDownload(taskId: string): Promise<void> {
+    try {
+        await callNativeMethod(downloadPluginName(), "cancelDownload", { taskId });
+    } catch {
+        // 幂等：任务已结束或插件缺失时忽略
+    }
 }

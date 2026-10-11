@@ -1,14 +1,14 @@
 import { useCallback, useMemo, useState } from "react";
-import { openMusicActions, openAddToSheet, showToast } from "@/core/uiAtoms";
+import { useAtomValue } from "jotai";
+import { openMusicActions, openAddToSheet, openSingleSelect, showToast } from "@/core/uiAtoms";
+import { downloadMusicBatch, downloadingAtom, QUALITY_LABEL } from "@/core/musicDownload";
 
 /**
  * 列表页多选逻辑（歌单 / 历史等列表共用）：
  *  - 选中集合驱动 MusicList 勾选圈；
+ *  - 下载：选音质档后入队并发下载（进度在「我的下载」页管理）；
  *  - 收藏：批量加入歌单面板；
  *  - 删除（用户歌单）：从歌单中删除。
- *
- * 与手机版的差异：下载相关的批量能力（startDownload / downloading）
- * 依赖下载体系（Pad 第三批），届时再补进本 hook 与 SelectActionsBar。
  */
 /**
  * @param musicList 完整列表：校验选中项仍在列表内
@@ -20,6 +20,7 @@ export function useMusicMultiSelect(
 ) {
     const [selectMode, setSelectMode] = useState(false);
     const [pickedItems, setPickedItems] = useState<IMusic.IMusicItem[]>([]);
+    const downloading = useAtomValue(downloadingAtom);
 
     /** 实际生效的选中：过滤掉已不在当前列表里的歌（如刚被移出歌单） */
     const selected = useMemo(
@@ -62,6 +63,20 @@ export function useMusicMultiSelect(
     const deselectAll = useCallback(() => {
         setPickedItems([]);
     }, []);
+
+    /** 批量下载：选音质档后入队（队列在「我的下载」页管理进度/暂停/停止） */
+    const startDownload = useCallback(() => {
+        if (!selected.length) {
+            return;
+        }
+        const qualityOptions: IMusic.IQualityKey[] = ["standard", "high", "super", "low"];
+        openSingleSelect({
+            options: qualityOptions.map((q) => ({ value: q, label: QUALITY_LABEL[q] })),
+            onSelect: (v) => {
+                downloadMusicBatch(selected, v as IMusic.IQualityKey);
+            },
+        });
+    }, [selected]);
 
     /** 批量收藏到歌单 */
     const startCollect = useCallback(() => {
@@ -109,6 +124,8 @@ export function useMusicMultiSelect(
         toggleSelect,
         selectAll,
         deselectAll,
+        startDownload,
+        downloading,
         startCollect,
         startDelete,
     };

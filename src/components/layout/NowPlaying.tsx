@@ -15,7 +15,9 @@ import {
     useCurrentLyric,
     loadCurrentLyric,
     currentLyricAtom,
+    qualityRank,
 } from "@/core/trackPlayer";
+import { downloadMusic, getDownloadRecord } from "@/core/musicDownload";
 import {
     nowPlayingOpenAtom,
     queueOpenAtom,
@@ -253,6 +255,32 @@ export default function NowPlaying() {
         });
     };
 
+    /** 下载音质面板：同档/更低提示跳过、更高提示覆盖（与列表下载入口同规则） */
+    const openDownloadSheet = () => {
+        const qualities: IMusic.IQualityKey[] = ["standard", "high", "super", "low"];
+        const existing = getDownloadRecord(currentMusic)?.quality;
+        openSingleSelect({
+            title: "下载音质",
+            options: qualities.map((q) => {
+                let desc: string | undefined;
+                if (existing) {
+                    const rank = qualityRank(q) - qualityRank(existing);
+                    if (rank < 0) {
+                        desc = "已有更高音质，下载会跳过";
+                    } else if (rank === 0) {
+                        desc = "已下载，重复下载会跳过";
+                    } else {
+                        desc = "覆盖升级现有文件";
+                    }
+                }
+                return { value: q, label: QUALITY_LABEL[q], desc };
+            }),
+            onSelect: (v) => {
+                downloadMusic(currentMusic, v as IMusic.IQualityKey);
+            },
+        });
+    };
+
     const openRateSheet = () => {
         openSingleSelect({
             title: "倍速播放",
@@ -310,6 +338,9 @@ export default function NowPlaying() {
                     });
                 },
             });
+        }
+        if (currentMusic.platform !== "local") {
+            actions.push({ label: "下载", onClick: openDownloadSheet });
         }
         actions.push({ label: "倍速播放", onClick: openRateSheet });
         actions.push({ label: "定时关闭", onClick: openSleepTimer });

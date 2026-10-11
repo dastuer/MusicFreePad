@@ -56,6 +56,8 @@ import {
     type IWebdavConfig,
 } from "@/core/dav";
 import { isNative } from "@/core/native";
+import { navigate } from "@/core/router";
+import { downloadSaveTargetLabel } from "@/core/musicDownload";
 import {
     isAndroidNative,
     isBatteryOptimizationIgnored,
@@ -106,6 +108,9 @@ export default function SettingsPage() {
     const [davTestMsg, setDavTestMsg] = useState<string | null>(null);
     const [davLastUpload, setDavLastUpload] = useState<number | null>(() =>
         getWebdavLastAt("upload"),
+    );
+    const [davLastDownload, setDavLastDownload] = useState<number | null>(() =>
+        getWebdavLastAt("download"),
     );
     const [urlRestore, setUrlRestore] = useState("");
 
@@ -184,6 +189,7 @@ export default function SettingsPage() {
         setBusy(true);
         try {
             const { summary } = await importBackupFromWebdav(mode);
+            setDavLastDownload(getWebdavLastAt("download"));
             applyRestored(describeResumeSummary(summary));
         } catch (e: any) {
             showToast(e?.message ?? "从 WebDAV 恢复失败");
@@ -391,6 +397,24 @@ export default function SettingsPage() {
                 </div>
             </section>
 
+            {native && (
+                <section className="settings-section">
+                    <h3 className="settings-section-title">下载</h3>
+                    <div
+                        className="settings-row"
+                        onClick={() => navigate("folderSelect", { mode: "single" })}
+                    >
+                        <div className="settings-label">
+                            保存位置
+                            <div className="settings-label-sub">
+                                已下载的歌曲优先播本地文件
+                            </div>
+                        </div>
+                        <div className="settings-value">{downloadSaveTargetLabel()}</div>
+                    </div>
+                </section>
+            )}
+
             <section className="settings-section">
                 <h3 className="settings-section-title">网络</h3>
                 {native ? (
@@ -577,6 +601,11 @@ export default function SettingsPage() {
                     {davLastUpload && (
                         <div className="settings-test-msg">
                             上次上传：{new Date(davLastUpload).toLocaleString()}
+                        </div>
+                    )}
+                    {davLastDownload && (
+                        <div className="settings-test-msg">
+                            上次恢复：{new Date(davLastDownload).toLocaleString()}
                         </div>
                     )}
                 </div>
