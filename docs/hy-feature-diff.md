@@ -82,7 +82,7 @@
 
 ### 第二批:播放体验
 
-#### 7. [ ] 播放音频缓存
+#### 7. [x] 播放音频缓存(2026-10-11 已完成,见「六、已完成记录」)
 
 - **Hy 实现**:`core/audioCache.ts`(554 行)+ trackPlayer 集成(`Hy: core/trackPlayer.ts:1404-1416` 播放时、`1686-1697` 无缝切音质时)
 - **机制**:
@@ -98,34 +98,35 @@
 
 #### 8. [x] Android 媒体通知/锁屏控制(2026-10-10 已完成,见「六、已完成记录」)
 
-#### 9. [ ] 断流原地重连
+#### 9. [x] 断流原地重连(2026-10-11 已完成)
 
 - **Hy 实现**:`core/trackPlayer.ts:55-56`(MAX_STREAM_RECONNECT=2)、`669-706` tryReconnectStream(同一直链重挂+断点续播)、`708-721` onAudioError 对错误码 2 先重连再走失败链
 - **Pad 现状**:onAudioError(`Pad: core/trackPlayer.ts:521-528`)一律直接进「降级→跳歌」失败链;stalled 微调 3 次后直接放弃(`487-489`),Hy 是救不回再触发重连(`566-569`)
 
-#### 10. [ ] 共播模式 / 音频焦点自愈
+#### 10. [x] 共播模式 / 音频焦点自愈(2026-10-11 已完成)
 
 - **Hy 实现**:`core/trackPlayer.ts:68-71`(续播延迟 300ms/冷却 15s)、`580-595` onAudioPause 区分主动暂停 vs 系统抢焦点、`601-633` maybeResumeAfterFocusLoss(被抢焦点后延迟回抢)、`1902-1917` applyCoPlaySessionType(Audio Session API 设 ambient,feature-detect)
 - 依赖 appConfig 的 `allowCoPlay`(`Hy: core/appConfig.ts:28-35`)+ 设置开关(`Hy: settings/index.tsx:196-208`)
 - **Pad 状态**:onAudioPause(`499-507`)无任何焦点处理;appConfig 无 allowCoPlay
 
-#### 11. [ ] 单曲循环无缝化
+#### 11. [x] 单曲循环无缝化(2026-10-11 已完成)
 
 - **Hy**:`core/trackPlayer.ts:1598-1603` syncLoopFlag 用 `audio.loop`,播完零间隙重头(play:1419、commitQualitySwitch:1832 均同步)
 - **Pad**:靠 onEnded 里 `currentTime=0 + play()`(`681-695`),有重载间隙
 
-#### 12. [ ] 队列拖拽排序
+#### 12. [x] 队列拖拽排序(2026-10-11 已完成)
 
 - **Hy**:`core/trackPlayer.ts:1110-1122` reorderMusic
 - **Pad**:播放队列面板(PlayQueuePanel)只能看不能拖;Hy 用 @dnd-kit 做拖拽(Pad 未装该依赖,移植时需 `npm i @dnd-kit/core @dnd-kit/sortable` 或改用原生 HTML5 拖拽),面板侧加拖拽即可
+- 落地说明:未引 @dnd-kit,直接搬 Hy PlayQueuePanel 的指针事件拖拽(setPointerCapture + 行位移让位动画),Pad 面板形态(右侧抽屉)不变
 
-#### 13. [ ] MediaSession 增强(iOS/Web 路径)
+#### 13. [x] MediaSession 增强(iOS/Web 路径)(2026-10-11 已完成)
 
 - **Hy**:`core/trackPlayer.ts:1284-1289` seekto(锁屏/耳机拖进度)、`1293-1322` syncMediaSessionState(setPositionState + playbackState,iOS 锁屏进度)、`1324-1335` clearMediaSession(队列播完清掉会话)
 - **Pad 现状**:updateMediaSession(`970-987`)仅 metadata + play/pause/prev/next 四按键
 - 注意:Android WebView 里 MediaSession 无效(已被第 8 项的原生通知覆盖),此项主要惠及 iOS/Web
 
-#### 14. [ ] 歌词翻译
+#### 14. [x] 歌词翻译(2026-10-11 已完成)
 
 - **Hy 实现**:
   - 解析:`core/trackPlayer.ts:1972-2006` loadCurrentLyric 读 `lyricSource.translation`;`2008-2059` parseLrc 双时间轴双指针就近对齐(0.4s 容差)挂到 `line.translation`
@@ -133,15 +134,16 @@
   - 设置开关:`settings/index.tsx:185-195`
 - **Pad 状态**:parseLrc(`1567-1587`)只解析原文;uiAtoms 无 lyricTranslationAtom
 
-#### 15. [ ] 加载态防抖(播放键不抖动)
+#### 15. [x] 加载态防抖(播放键不抖动)(2026-10-11 已完成)
 
 - **Hy**:`core/trackPlayer.ts:635-649` onAudioPlay(isLoading 及 readyState<3 时不抢状态)、`651-663` onAudioPlaying(换歌在途时迟到事件忽略)、`1450-1456` resume(自动播放被拦截时从 loading 回退 paused)
 - **Pad**:onAudioPlay 直接置 playing(`509-511`)
 
-#### 16. [ ] 播放中曲目元数据热更新(配合本地音乐/下载)
+#### 16. [~] 播放中曲目元数据热更新(配合本地音乐/下载)
 
 - **Hy**:`core/trackPlayer.ts:968-992` updateMusicItemMeta(匹配到歌词/封面后同步进当前歌与队列并落盘,`localMusic.ts:1481` 调用)
 - Pad 如不做本地音乐可跳过
+- 2026-10-11 决定:本批不移植,唯一调用方是 localMusic(第三批 18);随第三批一起落
 
 ### 第三批:大块功能(建议各自作为独立里程碑)
 
@@ -277,3 +279,22 @@
 - 音质菜单:改为 SingleSelectSheet——按当前歌 qualities 过滤档位、显示文件大小(formatQualitySize 入 utils)、勾选跟随实际播放档(playingQuality)、降级播放提示
 - 单曲菜单:MusicList 与 NowPlaying 的更多菜单补「收藏到歌单」「查看歌手」
 - 基建:uiAtoms 加 sleepTimerOpenAtom/singleSelectAtom 与 IMusicActionState title/subtitle;App.tsx 挂载 SleepTimerSheet + SingleSelectSheet;Icons 补 IconCheck/IconMultiSelect/IconDownload;global.css 补齐对应样式
+
+### [x] 第二批:播放体验(2026-10-11,清单 7/9/10/11/12/13/14/15)
+
+落地内容(Pad):
+- **音频缓存(7)**:新增 `core/audioCache.ts`(与 Hy 同款三通道:Android Storage 插件写 cacheDir / iOS Filesystem CACHE / 浏览器 Cache API `mf-audio-v1`;索引 localStorage、LRU + 保护在播键、试听片段防御、fire-and-forget 串行队列 + abort 在途下载、CORS 回退伴生代理 /media);trackPlayer 在 play() 与无缝切音质两处接 lookupCachedSrc/requestAudioCacheStore。
+  - 原生侧:`core/native.ts` 补 `localFileUrl`/`nativePlatform`/`writeAndroidFile`/`writeIosFile`/`blobToBase64`/`yieldToMainIfVisible`(自 Hy);新增 `StoragePlugin.java`(getDefaultDirs=filesDir+cacheDir、writeFile 分块 base64、deleteFile、statFile;Hy 里 cacheDir 在 LocalMusicPlugin,Pad 未移植本地音乐,合并进 Storage 插件);MainActivity 注册。
+  - iOS 通道需要 @capacitor/filesystem:npm 依赖已加,cap sync 已写入 Package.swift。
+  - 设置页新增「播放缓存」区:上限 select(2G/5G/10G/不限)+ 占用展示(audioCacheVersionAtom 驱动)+ 清理确认(MusicActionSheet 自定义标题)。
+- **断流原地重连(9)**:MAX_STREAM_RECONNECT=2、tryReconnectStream(同一直链重挂+断点续播,本地文件不参与);onAudioError 对 code=2 先重连再进失败链;stall 微调 3 次后改触发重连(原直接放弃)。Pad 特有:重连同样跳过 localPath;playedFromLocalDownload 属第三批下载体系,未搬。
+- **共播/焦点自愈(10)**:onAudioPause 用 internalPausePending 区分主动暂停 vs 系统抢焦点,非主动的走 maybeResumeAfterFocusLoss(300ms 延迟回抢 + 15s 冷却 + userPauseSeq 防窗口内误续);play()/detachAudio()/pause() 同步维护 internal 标记;`applyCoPlaySessionType()`(navigator.audioSession ambient,feature-detect)在 setup 与设置开关时调用;appConfig 补 getAllowCoPlay/setAllowCoPlay;设置页「播放」区加开关(复用 Pad 的 switch 样式)。
+- **单曲循环无缝化(11)**:syncLoopFlag 挂 audio.loop,play()/toggleRepeatMode/commitQualitySwitch/setup 同步;scheduleClose「播完再关」在单曲循环下本就有「到点直接关」的分支,兼容。
+- **队列拖拽(12)**:trackPlayer.reorderMusic;PlayQueuePanel 行尾把手指针事件拖拽(setPointerCapture、跟手位移、途经行让位过渡、边缘自动滚动)——照搬 Hy 的纯实现,未引 @dnd-kit;Icons 补 IconMenu、global.css 补 .queue-drag-handle/.drag-shift。
+- **MediaSession(13)**:updateMediaSession 补 seekto;新增 syncMediaSessionState(setPositionState+playbackState,onAudioPlay/onAudioPause/onAudioPlaying/seekTo 调用,iOS 锁屏进度条)、clearMediaSession(onEnded 队尾/空队列与 clearPlayListAndStop 收尾);Android 走原生通知不受影响。
+- **歌词翻译(14)**:parseLrc 双时间轴双指针就近对齐(0.4s)挂 line.translation;loadCurrentLyric 读 lyricSource.translation;types IParsedLrcItem 加 translation;uiAtoms 加 lyricTranslationAtom(持久化开关);NowPlaying 歌词行下方渲染 .np-lyric-trans;设置页「歌词显示翻译」开关。
+- **加载态防抖(15)**:onAudioPlay 在 isLoading 或 readyState<3 时不抢状态(保持 loading);onAudioPlaying 忽略换歌在途的迟到事件并重置 reconnectCount;resume 起播失败(自动播放被拦)从 loading 回退 paused;waiting 事件单拆 onAudioWaiting(playing→loading 转圈 + 起 stall 观察,原来 waiting/stalled 共用 onAudioStall)。
+- 16 本批跳过(唯一调用方 localMusic,随第三批落)。
+- 与 Pad 特有功能的合并点:http→https 升级回退链(resolvedHttpUpgraded/insecureRetrying)与重连/降级链共存——重连失败才进 handlePlayFailure,回退链顺序不动;断流重连不救 localPath 与本地下载。
+
+验证:tsc / vite build / assembleDebug 全过(Java 含新 StoragePlugin)。音频缓存三通道、断流重连、焦点自愈的真机行为待平板实测。

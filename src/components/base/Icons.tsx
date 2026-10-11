@@ -176,6 +176,13 @@ export const IconMore = ({ size = 22, strokeWidth = 1.8 }: IIconProps) => (
     </svg>
 );
 
+/** 汉堡菜单三横线（队列拖拽把手会旋转 90° 当握把用） */
+export const IconMenu = ({ size = 22, strokeWidth = 1.8 }: IIconProps) => (
+    <svg {...base(size)} strokeWidth={strokeWidth}>
+        <path d="M4 6h16M4 12h16M4 18h16" />
+    </svg>
+);
+
 export const IconClose = ({ size = 22, strokeWidth = 1.8 }: IIconProps) => (
     <svg {...base(size)} strokeWidth={strokeWidth}>
         <path d="M6 6l12 12M18 6L6 18" />

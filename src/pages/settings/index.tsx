@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useAtomValue } from "jotai";
 import {
     setTheme,
     useThemeSetting,
@@ -7,8 +8,30 @@ import {
 import {
     setDefaultQuality,
     useQuality,
+    applyCoPlaySessionType,
 } from "@/core/trackPlayer";
-import { getConfig, setConfig } from "@/core/appConfig";
+import {
+    getConfig,
+    setConfig,
+    getAllowCoPlay,
+    setAllowCoPlay,
+} from "@/core/appConfig";
+import {
+    getAudioCacheLimitMB,
+    setAudioCacheLimitMB,
+    AUDIO_CACHE_LIMIT_OPTIONS,
+    getAudioCacheStats,
+    formatAudioCacheSize,
+    enforceAudioCacheLimit,
+    clearAudioCache,
+    audioCacheVersionAtom,
+} from "@/core/audioCache";
+import {
+    openMusicActions,
+    setLyricTranslation,
+    lyricTranslationAtom,
+    showToast,
+} from "@/core/uiAtoms";
 import { getProxyBase, setProxyBase, testProxy } from "@/core/net";
 import {
     exportBackupToLocal,
@@ -38,13 +61,18 @@ import {
     isBatteryOptimizationIgnored,
     requestIgnoreBatteryOptimizations,
 } from "@/core/mediaNotification";
-import { showToast } from "@/core/uiAtoms";
 
 /** 设置：外观 / 播放 / 网络 / 备份（本地文件、URL、WebDAV，与桌面端互通） */
 export default function SettingsPage() {
     const themeSetting = useThemeSetting();
     const quality = useQuality();
     const [rememberProgress, setRememberProgress] = useState(getConfig("rememberProgress", true) !== false);
+    const [allowCoPlay, setAllowCoPlayState] = useState(getAllowCoPlay());
+    const showTranslation = useAtomValue(lyricTranslationAtom);
+    // 缓存写入 / 清理后版本号自增，占用展示跟着刷新
+    const cacheVersion = useAtomValue(audioCacheVersionAtom);
+    const cacheStats = useMemo(() => getAudioCacheStats(), [cacheVersion]);
+    const [cacheLimit, setCacheLimitState] = useState(getAudioCacheLimitMB());
     const [proxyBase, setProxyBaseState] = useState(getProxyBase());
     const [proxyTestMsg, setProxyTestMsg] = useState<string | null>(null);
     const [counts, setCounts] = useState<IBackupCounts | null>(null);
@@ -229,6 +257,43 @@ export default function SettingsPage() {
                         <span className="switch-slider" />
                     </label>
                 </div>
+                <div className="settings-row">
+                    <div className="settings-label">
+                        歌词显示翻译
+                        <div className="settings-label-sub">音源提供 translation 时，原文下方并排显示译文</div>
+                    </div>
+                    <label className="switch">
+                        <input
+                            type="checkbox"
+                            checked={showTranslation}
+                            onChange={(e) => {
+                                setLyricTranslation(e.target.checked);
+                                showToast(e.target.checked ? "歌词将同时显示翻译" : "已关闭歌词翻译");
+                            }}
+                        />
+                        <span className="switch-slider" />
+                    </label>
+                </div>
+                <div className="settings-row">
+                    <div className="settings-label">
+                        允许与其他应用同时播放
+                        <div className="settings-label-sub">开播不抢音频焦点，被其他应用打断后自动续播（需系统支持）</div>
+                    </div>
+                    <label className="switch">
+                        <input
+                            type="checkbox"
+                            checked={allowCoPlay}
+                            onChange={(e) => {
+                                const next = e.target.checked;
+                                setAllowCoPlayState(next);
+                                setAllowCoPlay(next);
+                                applyCoPlaySessionType();
+                                showToast(next ? "已允许与其他应用同时播放" : "已恢复独占播放");
+                            }}
+                        />
+                        <span className="switch-slider" />
+                    </label>
+                </div>
                 {androidNative && (
                     <div
                         className="settings-row"
@@ -255,6 +320,75 @@ export default function SettingsPage() {
                         </div>
                     </div>
                 )}
+            </section>
+
+            <section className="settings-section">
+                <h3 className="settings-section-title">播放缓存</h3>
+                <div className="settings-label-sub settings-section-desc">
+                    听过的歌会后台整首存入缓存，再次播放直接读本地：秒开、省流量、断网可重听。
+                </div>
+                <div className="settings-row">
+                    <div className="settings-label">缓存上限</div>
+                    <select
+                        className="select-input"
+                        value={String(cacheLimit)}
+                        onChange={(e) => {
+                            const mb = Number(e.target.value);
+                            setCacheLimitState(mb);
+                            setAudioCacheLimitMB(mb);
+                            void enforceAudioCacheLimit();
+                        }}
+                    >
+                        {AUDIO_CACHE_LIMIT_OPTIONS.map((it) => (
+                            <option key={it.value} value={it.value}>
+                                {it.label}
+                            </option>
+                        ))}
+                    </select>
+                </div>
+                <div className="settings-row">
+                    <div className="settings-label">
+                        当前占用
+                        <div className="settings-label-sub">
+                            {cacheStats.count
+                                ? `${cacheStats.count} 首 · ${formatAudioCacheSize(cacheStats.size)}`
+                                : "暂无缓存"}
+                        </div>
+                    </div>
+                    <button
+                        className="btn ghost"
+                        onClick={() =>
+                            openMusicActions({
+                                musicItem: {} as any,
+                                title: "清理播放缓存",
+                                subtitle: cacheStats.count
+                                    ? `将删除 ${cacheStats.count} 首歌的缓存（${formatAudioCacheSize(
+                                          cacheStats.size,
+                                      )}），不影响已下载的音乐`
+                                    : "当前没有已缓存的歌曲",
+                                actions: [
+                                    {
+                                        label: "清理",
+                                        danger: true,
+                                        onClick: () => {
+                                            if (!cacheStats.count) {
+                                                showToast("当前没有已缓存的歌曲");
+                                                return;
+                                            }
+                                            void clearAudioCache().then((r) =>
+                                                showToast(
+                                                    `已清理 ${r.removed} 首歌的缓存，释放 ${formatAudioCacheSize(r.sizeFreed)}`,
+                                                ),
+                                            );
+                                        },
+                                    },
+                                ],
+                            })
+                        }
+                    >
+                        清理缓存
+                    </button>
+                </div>
             </section>
 
             <section className="settings-section">

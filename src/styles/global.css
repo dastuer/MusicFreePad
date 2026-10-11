@@ -1412,6 +1412,18 @@ code {
     font-weight: 600;
 }
 
+/* 原文行下方的翻译行：字号更小、更暗；激活行翻译随之提亮 */
+.np-lyric-trans {
+    font-size: 12.5px;
+    line-height: 1.5;
+    margin-top: 3px;
+    color: rgba(255, 255, 255, 0.34);
+}
+
+.np-lyric-line.active .np-lyric-trans {
+    color: rgba(255, 255, 255, 0.78);
+}
+
 .np-lyric-empty {
     text-align: center;
     color: rgba(255, 255, 255, 0.4);
@@ -1849,6 +1861,32 @@ code {
     .queue-row:hover .queue-row-remove {
     opacity: 1;
     }
+}
+
+/* 拖拽排序把手：指针事件驱动（core/trackPlayer reorderMusic） */
+.queue-drag-handle {
+    touch-action: none;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 36px;
+    color: var(--text-tertiary);
+    cursor: grab;
+    background: none;
+    border: none;
+    padding: 0;
+}
+
+/* 汉堡图标转成横向的「≡」握把 */
+.queue-drag-handle svg {
+    transform: rotate(90deg);
+}
+
+/* 让位的行平滑滑开；拖拽行自身跟手，不加速度 */
+.queue-row.drag-shift {
+    transition: transform 0.16s ease;
 }
 
 .queue-empty {

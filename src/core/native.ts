@@ -176,3 +176,99 @@ export async function callNativeMethod(
     const Cap = (window as any).Capacitor;
     return Cap.nativePromise(pluginName, methodName, options);
 }
+
+/**
+ * 设备本地文件路径 → WebView 能加载的地址（Capacitor 的 _capacitor_file_ 通道）。
+ * 与 @capacitor/core 的 convertFileSrc 同规则（androidScheme 为 https，见 capacitor.config.ts）。
+ * 非原生环境返回空串；封面图 / <audio> 播放本地文件都走它。
+ */
+export function localFileUrl(absPath: string): string {
+    if (!absPath || !isNative()) {
+        return "";
+    }
+    try {
+        const platform = (window as any).Capacitor?.getPlatform?.();
+        if (platform === "android") {
+            return `https://localhost/_capacitor_file_${absPath}`;
+        }
+        if (platform === "ios") {
+            return `capacitor://localhost/_capacitor_file_${absPath}`;
+        }
+    } catch {
+        // ignore
+    }
+    return `file://${absPath}`;
+}
+
+/** 当前原生平台（web 返回 null）；写文件通道按它分流 */
+export function nativePlatform(): "android" | "ios" | null {
+    if (!isNative()) {
+        return null;
+    }
+    try {
+        const p = (window as any).Capacitor?.getPlatform?.();
+        return p === "android" || p === "ios" ? p : null;
+    } catch {
+        return null;
+    }
+}
+
+/* ---------- 文件写入（播放缓存共用） ---------- */
+
+/** 分块大小取 3 的倍数（字节），保证 base64 分块拼接无补位问题。
+ *  每块过桥要在 JS 主线程同步编解码 + 桥接序列化，块越小单次阻塞越短（约 1MB ≈ 几毫秒），
+ *  缓存写盘才不会冻结界面 */
+export const WRITE_CHUNK = Math.floor((1024 * 1024) / 3) * 3;
+
+export function blobToBase64(blob: Blob): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+            const s = String(reader.result ?? "");
+            resolve(s.slice(s.indexOf(",") + 1));
+        };
+        reader.onerror = () => reject(new Error("读取文件数据失败"));
+        reader.readAsDataURL(blob);
+    });
+}
+
+/** Android：经 StoragePlugin 分块写入绝对路径（绕开 Filesystem 插件在 13+ 的公共目录门禁） */
+export async function writeAndroidFile(absPath: string, blob: Blob) {
+    for (let offset = 0; offset === 0 || offset < blob.size; offset += WRITE_CHUNK) {
+        const data = await blobToBase64(blob.slice(offset, offset + WRITE_CHUNK));
+        await callNativeMethod("Storage", "writeFile", {
+            path: absPath,
+            data,
+            append: offset > 0,
+        });
+        // 写块之间让出主线程，连续写大文件时不冻结界面
+        await yieldToMainIfVisible();
+    }
+}
+
+/** iOS：经 Filesystem 插件写入沙盒目录（首块 writeFile 建文件，后续 appendFile 追加） */
+export async function writeIosFile(directory: "DOCUMENTS" | "DATA" | "CACHE", path: string, blob: Blob) {
+    for (let offset = 0; offset === 0 || offset < blob.size; offset += WRITE_CHUNK) {
+        const data = await blobToBase64(blob.slice(offset, offset + WRITE_CHUNK));
+        if (offset === 0) {
+            await callNativeMethod("Filesystem", "writeFile", {
+                path,
+                directory,
+                data,
+                recursive: true,
+            });
+        } else {
+            await callNativeMethod("Filesystem", "appendFile", { path, directory, data });
+        }
+        await yieldToMainIfVisible();
+    }
+}
+
+/** 让出主线程一拍：给渲染、输入与音频留出处理窗口。
+ *  页面在后台时定时器被钳制到 1s+，会让分块写盘近乎停摆 —— 此时跳过让渡保吞吐 */
+export function yieldToMainIfVisible(): Promise<void> {
+    if (document.hidden) {
+        return Promise.resolve();
+    }
+    return new Promise((resolve) => setTimeout(resolve, 0));
+}

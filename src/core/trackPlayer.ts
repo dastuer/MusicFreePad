@@ -3,7 +3,8 @@ import EventEmitter from "eventemitter3";
 import { buildPlayableMediaUrl, upgradeToHttps } from "./net";
 import { getPluginByMedia, pluginCall } from "./ipc";
 import { setMusicHistory } from "./musicHistory";
-import { getQuality, setQuality, getConfig } from "./appConfig";
+import { getQuality, setQuality, getConfig, getAllowCoPlay } from "./appConfig";
+import { lookupCachedSrc, requestAudioCacheStore } from "./audioCache";
 
 export type MusicState = "playing" | "paused" | "stopped" | "loading";
 export type MusicRepeatMode = "off" | "queue" | "single";
@@ -50,6 +51,9 @@ const MEDIA_SOURCE_TIMEOUT = 15000;
 /** 连续 N 首都播不出来就停下，不再自动往后跳（否则坏音源会把整个歌单空转一圈） */
 const MAX_AUTO_SKIP = 3;
 
+/** 网络断流原地重连上限：每次成功开播后重新计数（熄屏 WiFi 休眠 / 省电限网的抖动自救） */
+const MAX_STREAM_RECONNECT = 2;
+
 /** 本曲内音质降级重试的上限 */
 const MAX_QUALITY_RETRY = 3;
 
@@ -59,6 +63,11 @@ const MAX_HISTORY = 50;
 /** 「记忆播放进度」的最小起播位置 / 结尾间隔（与桌面端 playProgress 同规则） */
 const MIN_REMEMBER_POSITION = 5;
 const END_GAP = 5;
+
+/** 共播模式下被抢焦点后的续播延迟（等对方的焦点请求落定再回抢） */
+const CO_PLAY_RESUME_DELAY = 300;
+/** 续播冷却：15 秒内只回抢一次，对方再抢就让位，免得两边来回抢占打架 */
+const CO_PLAY_RESUME_COOLDOWN = 15000;
 
 /**
  * 队列里认一首歌用的键。与 `musicSheet` 的 `mediaKey` 同一约定。
@@ -282,6 +291,8 @@ class TrackPlayer extends EventEmitter {
     private playSeq = 0;
     private stallTimer: ReturnType<typeof setTimeout> | null = null;
     private stallNudges = 0;
+    private reconnecting = false;
+    private reconnectCount = 0;
     private pendingSeekListener: (() => void) | null = null;
     private pendingStartPosition = 0;
     private resolvedQuality: IMusic.IQualityKey | null = null;
@@ -296,6 +307,12 @@ class TrackPlayer extends EventEmitter {
     private probeAudio: HTMLAudioElement | null = null;
     /** 在途切换的序号：换歌 / 再次切换时用它作废旧预取 */
     private qualitySwitchSeq = 0;
+    /** 接下来的一次 pause 事件是应用主动发起的（区别于系统抢音频焦点打断） */
+    private internalPausePending = false;
+    /** 主动暂停的序号：共播续播定时器靠它识别「用户在延迟窗口里按了暂停」 */
+    private userPauseSeq = 0;
+    /** 上次共播续播的时间点，冷却期内不再回抢 */
+    private lastCoPlayResumeAt = 0;
 
     setup() {
         if (this.audio) {
@@ -306,6 +323,7 @@ class TrackPlayer extends EventEmitter {
         audio.volume = getStoredVolume();
         this.attachAudioListeners(audio);
         this.audio = audio;
+        applyCoPlaySessionType();
 
         // Pad 版：切后台 / 关页面前把「听到哪儿」写进 localStorage（桌面端是退出握手写 session.json）
         const persist = () => this.persistProgress();
@@ -317,6 +335,7 @@ class TrackPlayer extends EventEmitter {
         window.addEventListener("pagehide", persist);
 
         this.restoreSession();
+        this.syncLoopFlag();
     }
 
     private attachAudioListeners(audio: HTMLAudioElement) {
@@ -327,7 +346,7 @@ class TrackPlayer extends EventEmitter {
         audio.addEventListener("play", this.onAudioPlay);
         audio.addEventListener("playing", this.onAudioPlaying);
         audio.addEventListener("error", this.onAudioError);
-        audio.addEventListener("waiting", this.onAudioStall);
+        audio.addEventListener("waiting", this.onAudioWaiting);
         audio.addEventListener("stalled", this.onAudioStall);
     }
 
@@ -339,7 +358,7 @@ class TrackPlayer extends EventEmitter {
         audio.removeEventListener("play", this.onAudioPlay);
         audio.removeEventListener("playing", this.onAudioPlaying);
         audio.removeEventListener("error", this.onAudioError);
-        audio.removeEventListener("waiting", this.onAudioStall);
+        audio.removeEventListener("waiting", this.onAudioWaiting);
         audio.removeEventListener("stalled", this.onAudioStall);
     }
 
@@ -481,6 +500,24 @@ class TrackPlayer extends EventEmitter {
 
     /** 播放停滞自救：12 秒还没恢复就微调进度，强制浏览器重新取流 */
     private onAudioStall = () => {
+        this.beginStallWatch();
+    };
+
+    /** 缓冲断流（waiting）：界面切成「加载中」转圈，恢复出声时 playing 事件再切回来 */
+    private onAudioWaiting = () => {
+        const audio = this.audio;
+        if (
+            audio &&
+            !audio.paused &&
+            this._currentMusic &&
+            store.get(musicStateAtom) === "playing"
+        ) {
+            setAtom(musicStateAtom, "loading");
+        }
+        this.beginStallWatch();
+    };
+
+    private beginStallWatch() {
         if (this.stallTimer) {
             return;
         }
@@ -491,6 +528,8 @@ class TrackPlayer extends EventEmitter {
                 return;
             }
             if (this.stallNudges >= 3) {
+                // 微调救不回来（多半是流已经死了）：原地重连重新取流，别一直哑着
+                this.tryReconnectStream();
                 return;
             }
             this.stallNudges += 1;
@@ -500,9 +539,12 @@ class TrackPlayer extends EventEmitter {
                 // ignore
             }
         }, 12000);
-    };
+    }
 
     private onAudioPause = () => {
+        // 先消费「主动暂停」标记：没标记的 pause 事件就是系统抢音频焦点导致的
+        const internal = this.internalPausePending;
+        this.internalPausePending = false;
         this.clearStallWatch();
         if (this.isLoading) {
             return;
@@ -510,24 +552,133 @@ class TrackPlayer extends EventEmitter {
         if (this._currentMusic) {
             setAtom(musicStateAtom, "paused");
         }
+        this.syncMediaSessionState();
+        if (!internal) {
+            this.maybeResumeAfterFocusLoss();
+        }
     };
 
+    /**
+     * 共播模式下被抢了音频焦点（其他应用开播把 WebView 的播放暂停了）：
+     * 稍等对方落定后原地续播。冷却期内再被抢就让位，免得两边来回抢占。
+     */
+    private maybeResumeAfterFocusLoss() {
+        const audio = this.audio;
+        if (
+            !getAllowCoPlay()
+            || !audio
+            || !this._currentMusic
+            || !audio.src
+            || audio.ended
+            || audio.error
+            || this.reconnecting
+            || Date.now() - this.lastCoPlayResumeAt < CO_PLAY_RESUME_COOLDOWN
+        ) {
+            return;
+        }
+        this.lastCoPlayResumeAt = Date.now();
+        const audioAtSchedule = audio;
+        const pauseSeqAtSchedule = this.userPauseSeq;
+        setTimeout(() => {
+            // 延迟窗口里用户自己按了暂停 / 换了歌 / 出错了就不再续
+            if (
+                this.audio === audioAtSchedule
+                && this.userPauseSeq === pauseSeqAtSchedule
+                && this._currentMusic
+                && audioAtSchedule.paused
+                && !audioAtSchedule.ended
+                && !audioAtSchedule.error
+            ) {
+                audioAtSchedule.play().catch((e) => {
+                    console.warn("[trackPlayer] 共播续播失败", e?.name ?? e);
+                });
+            }
+        }, CO_PLAY_RESUME_DELAY);
+    }
+
     private onAudioPlay = () => {
+        // 「play」只代表已请求播放：换歌解析在途时不抢状态（由 beginLoading/cancelLoading 管）；
+        // 数据没跟上（readyState < 3）也保持加载转圈，等真正出声的「playing」事件再切播放态，
+        // 否则播放键会在 转圈↔暂停 之间来回抖。
+        if (this.isLoading) {
+            return;
+        }
+        const audio = this.audio;
+        if (audio && audio.src && audio.readyState < 3) {
+            setAtom(musicStateAtom, "loading");
+            return;
+        }
         setAtom(musicStateAtom, "playing");
+        this.syncMediaSessionState();
     };
 
     private onAudioPlaying = () => {
+        if (this.isLoading) {
+            // 换歌解析在途：旧音源排队的迟到事件不抢状态
+            return;
+        }
         this.clearStallWatch();
         this.isLoading = false;
         this.autoSkipCount = 0;
         this.qualityRetryCount = 0;
+        this.reconnectCount = 0;
         setAtom(musicStateAtom, "playing");
+        this.syncMediaSessionState();
     };
+
+    /**
+     * 网络断流自救：同一直链原地重挂并从断点续播（异步进行，不阻塞 error 处理）。
+     * 返回 true 表示本次失败已由重连接管。本地文件没有网络因素，不参与。
+     */
+    private tryReconnectStream(): boolean {
+        const audio = this.audio;
+        const music = this._currentMusic;
+        const src = audio?.src;
+        if (!audio || !src || !music || this.reconnecting) {
+            return false;
+        }
+        if (music.localPath) {
+            return false;
+        }
+        if (this.reconnectCount >= MAX_STREAM_RECONNECT) {
+            return false;
+        }
+        this.reconnectCount += 1;
+        this.reconnecting = true;
+        const playId = this.pendingPlayId;
+        const position = audio.currentTime || 0;
+        void (async () => {
+            try {
+                console.warn(
+                    `[trackPlayer] 音频流中断，原地重连第 ${this.reconnectCount} 次（${position.toFixed(1)}s 处）`,
+                );
+                audio.src = src;
+                audio.load();
+                this.applyStartPosition(audio, position);
+                await audio.play();
+                console.warn("[trackPlayer] 断流重连成功");
+            } catch {
+                // 重连失败且期间没有新的播放请求：交回原失败链（降级 / 跳歌）兜底
+                if (this.pendingPlayId === playId && this.audio === audio) {
+                    await this.handlePlayFailure(music, "音频流网络中断（重连失败）");
+                }
+            } finally {
+                this.reconnecting = false;
+            }
+        })();
+        return true;
+    }
 
     private onAudioError = async () => {
         const err = this.audio?.error;
         console.warn(`[trackPlayer] media error code=${err?.code} message=${err?.message}`);
         if (!this._currentMusic || !this.audio?.src) {
+            return;
+        }
+        // 播放中的网络断流（熄屏 WiFi 休眠 / 系统省电限网）：先原地重连续播，
+        // 不直接走「降级→跳歌」失败链，一次网络抖动不至于打断整队听歌。
+        // 只救网络类错误（2）；链接失效（4）、解码失败（3）重连也没用。
+        if (err?.code === 2 && this.tryReconnectStream()) {
             return;
         }
         await this.handlePlayFailure(this._currentMusic, describeMediaError(err));
@@ -541,6 +692,9 @@ class TrackPlayer extends EventEmitter {
         const audio = this.audio;
         if (!audio) {
             return;
+        }
+        if (!audio.paused) {
+            this.internalPausePending = true;
         }
         audio.pause();
         audio.removeAttribute("src");
@@ -735,6 +889,7 @@ class TrackPlayer extends EventEmitter {
         if (this._playList.length === 0) {
             this.emit(TrackPlayerEvents.PlayEnd);
             setAtom(musicStateAtom, "stopped");
+            this.clearMediaSession();
             return;
         }
         const index = this.getMusicIndexInPlayList(this._currentMusic);
@@ -745,6 +900,7 @@ class TrackPlayer extends EventEmitter {
         ) {
             this.emit(TrackPlayerEvents.PlayEnd);
             setAtom(musicStateAtom, "stopped");
+            this.clearMediaSession();
             return;
         }
         await this.skipToNext();
@@ -911,6 +1067,20 @@ class TrackPlayer extends EventEmitter {
         );
     }
 
+    /** 拖拽排序：把 from 位置的歌移到 to 位置，不影响正在播放 */
+    reorderMusic(from: number, to: number) {
+        const len = this._playList.length;
+        if (from === to || from < 0 || from >= len || to < 0 || to >= len) {
+            return;
+        }
+        const list = [...this._playList];
+        const [moved] = list.splice(from, 1);
+        list.splice(to, 0, moved);
+        this._playList = list;
+        setAtom(playListAtom, list);
+        this.persistPlayList();
+    }
+
     /** 清空播放队列，正在播的这首继续播 */
     clearPlayList() {
         this._playList = [];
@@ -930,6 +1100,7 @@ class TrackPlayer extends EventEmitter {
         setAtom(progressAtom, { position: 0, duration: 0 });
         setAtom(playingQualityAtom, null);
         this.detachAudio();
+        this.clearMediaSession();
         this.clearPlayList();
         this._history = [];
         try {
@@ -1035,6 +1206,56 @@ class TrackPlayer extends EventEmitter {
             navigator.mediaSession.setActionHandler("pause", () => this.pause());
             navigator.mediaSession.setActionHandler("previoustrack", () => this.skipToPrevious());
             navigator.mediaSession.setActionHandler("nexttrack", () => this.skipToNext());
+            navigator.mediaSession.setActionHandler("seekto", (details: any) => {
+                const target = details?.seekTime;
+                if (typeof target === "number" && Number.isFinite(target)) {
+                    this.seekTo(target);
+                }
+            });
+        }
+    }
+
+    /**
+     * 把「听到哪儿」同步进 Web MediaSession（iOS 锁屏 / 控制中心、桌面浏览器的
+     * 媒体键浮层靠它显示进度）。Android 原生走 mediaNotification 通道，用不到它。
+     */
+    private syncMediaSessionState() {
+        if (!("mediaSession" in navigator)) {
+            return;
+        }
+        const audio = this.audio;
+        if (!audio?.src) {
+            return;
+        }
+        try {
+            const duration =
+                Number.isFinite(audio.duration) && audio.duration > 0
+                    ? audio.duration
+                    : this._currentMusic?.duration ?? 0;
+            if (!duration) {
+                return;
+            }
+            navigator.mediaSession.setPositionState({
+                duration,
+                position: Math.min(Math.max(audio.currentTime || 0, 0), duration),
+                playbackRate: audio.playbackRate || 1,
+            });
+            navigator.mediaSession.playbackState = audio.paused ? "paused" : "playing";
+        } catch {
+            // ignore
+        }
+    }
+
+    /** 彻底停了（队列播完 / 清空）：把系统媒体会话一并收掉 */
+    private clearMediaSession() {
+        if (!("mediaSession" in navigator)) {
+            return;
+        }
+        try {
+            navigator.mediaSession.metadata = null;
+            navigator.mediaSession.playbackState = "none";
+        } catch {
+            // ignore
         }
     }
 
@@ -1108,8 +1329,23 @@ class TrackPlayer extends EventEmitter {
             if (!audio) {
                 return;
             }
-            audio.src = resolved.src;
+            let playSrc = resolved.src;
+            if (!target.localPath) {
+                // 播放缓存：命中直接读本地（秒开、省流量、断网可重听）；
+                // 未命中先在线播，同时后台整首缓存，下次播放走本地
+                const cached = await lookupCachedSrc(target, resolved.quality);
+                if (this.pendingPlayId !== playId) {
+                    return;
+                }
+                if (cached) {
+                    playSrc = cached;
+                } else {
+                    requestAudioCacheStore(target, resolved.quality, resolved.source);
+                }
+            }
+            audio.src = playSrc;
             audio.playbackRate = this._rate;
+            this.syncLoopFlag();
             this.applyStartPosition(audio, resumePosition);
             this.pendingStartPosition = 0;
             await this.updateMediaSession(target);
@@ -1142,6 +1378,10 @@ class TrackPlayer extends EventEmitter {
         }
         audio.play().catch((e) => {
             console.warn("[trackPlayer] resume failed", e?.name ?? e);
+            // 起播失败（典型是自动播放被拦截）：别让界面卡在「加载中」转圈
+            if (!this.isLoading && store.get(musicStateAtom) === "loading") {
+                setAtom(musicStateAtom, "paused");
+            }
         });
     }
 
@@ -1150,7 +1390,13 @@ class TrackPlayer extends EventEmitter {
             this.cancelLoading();
             return;
         }
-        this.audio?.pause();
+        this.userPauseSeq += 1;
+        const audio = this.audio;
+        if (audio && !audio.paused) {
+            // 只有真的在播才有 pause 事件，标记也别留到下一次外部暂停上
+            this.internalPausePending = true;
+        }
+        audio?.pause();
         setAtom(musicStateAtom, "paused");
     }
 
@@ -1278,18 +1524,27 @@ class TrackPlayer extends EventEmitter {
         await this.play(musicItem, true);
     }
 
+    /** 单曲循环交给 audio.loop：播完无缝重头，消除 ended→seek(0)→play 的重新加载间隙 */
+    private syncLoopFlag() {
+        if (this.audio) {
+            this.audio.loop = this._repeatMode === "single";
+        }
+    }
+
     toggleRepeatMode() {
         const order: MusicRepeatMode[] = ["off", "queue", "single"];
         const next = order[(order.indexOf(this._repeatMode) + 1) % order.length];
         this._repeatMode = next;
         setAtom(repeatModeAtom, next);
         localStorage.setItem("repeatMode", next);
+        this.syncLoopFlag();
     }
 
     async seekTo(position: number) {
         if (this.audio && Number.isFinite(this.audio.duration)) {
             this.audio.currentTime = position;
             setAtom(progressAtom, { position, duration: this.audio.duration || 0 });
+            this.syncMediaSessionState();
             return;
         }
         if (this._currentMusic) {
@@ -1354,7 +1609,20 @@ class TrackPlayer extends EventEmitter {
             probe.preload = "auto";
             probe.playbackRate = this._rate;
             this.probeAudio = probe;
-            probe.src = resolved.src;
+            let probeSrc = resolved.src;
+            if (!musicItem.localPath) {
+                // 目标音质命中缓存则从本地交接（切换近乎瞬时）；未命中顺路缓存该音质
+                const cached = await lookupCachedSrc(musicItem, resolved.quality);
+                if (isStale()) {
+                    return { status: "cancelled" };
+                }
+                if (cached) {
+                    probeSrc = cached;
+                } else {
+                    requestAudioCacheStore(musicItem, resolved.quality, resolved.source);
+                }
+            }
+            probe.src = probeSrc;
             await this.waitForProbeBuffered(probe, livePosition, isStale);
             if (isStale()) {
                 return { status: "cancelled" };
@@ -1490,8 +1758,12 @@ class TrackPlayer extends EventEmitter {
         probe.volume = volume;
         probe.muted = false;
         probe.playbackRate = this._rate;
+        probe.loop = this._repeatMode === "single";
         // 预取时被静音催起来过，这儿要么接着出声，要么就跟着旧的一起停住
         if (!wasPlaying) {
+            if (!probe.paused) {
+                this.internalPausePending = true;
+            }
             probe.pause();
         }
         try {
@@ -1555,6 +1827,23 @@ class TrackPlayer extends EventEmitter {
 }
 
 export const TrackPlayerSingleton = new TrackPlayer();
+
+/**
+ * 把「允许与其他应用同时播放」声明给浏览器的音频会话（Audio Session API，
+ * 较新的 Chromium WebView 才支持，feature-detect 后设置）。
+ * ambient = 与其他应用混音共存：开播不抢音频焦点，也不会被别人的焦点请求打断；
+ * 不支持的内核走 onAudioPause 里「被抢焦点自动续播」的兜底。
+ */
+export function applyCoPlaySessionType() {
+    try {
+        const session = (navigator as any).audioSession;
+        if (session) {
+            session.type = getAllowCoPlay() ? "ambient" : "auto";
+        }
+    } catch {
+        // 内核不认这个属性就算了，别影响播放
+    }
+}
 
 /** ---------- hooks ---------- */
 export function usePlayList() {
@@ -1623,10 +1912,12 @@ export async function loadCurrentLyric(musicItem: IMusic.IMusicItem) {
             // ignore
         }
     }
-    store.set(currentLyricAtom, rawLrc ? parseLrc(rawLrc) : []);
+    // translation 与 rawLrc 一样是纯文本（MusicFree 插件约定），原文走 lrc 链接时它也直接可用
+    const translationLrc = lyricSource?.translation ?? "";
+    store.set(currentLyricAtom, rawLrc ? parseLrc(rawLrc, translationLrc || undefined) : []);
 }
 
-function parseLrc(rawLrc: string): ILyric.IParsedLrc {
+function parseLrc(rawLrc: string, translationRaw?: string): ILyric.IParsedLrc {
     const result: ILyric.IParsedLrc = [];
     const lines = rawLrc.split("\n");
     const timeReg = /\[(\d+):(\d+)(?:[.:](\d+))?\]/g;
@@ -1645,5 +1936,36 @@ function parseLrc(rawLrc: string): ILyric.IParsedLrc {
         }
     });
     result.sort((a, b) => a.time - b.time);
+    if (translationRaw?.trim()) {
+        // 翻译与原文的两条时间轴大多逐行一致，但小数位精度可能不同：
+        // 双指针按时间就近对齐（0.4s 内视为同一行），对不上就当作没有翻译
+        const trans: { time: number; text: string }[] = [];
+        translationRaw.split("\n").forEach((line) => {
+            const text = line.replace(timeReg, "").trim();
+            if (!text) {
+                return;
+            }
+            let match: RegExpExecArray | null;
+            timeReg.lastIndex = 0;
+            while ((match = timeReg.exec(line)) !== null) {
+                const minutes = parseInt(match[1], 10);
+                const seconds = parseInt(match[2], 10);
+                const fraction = match[3]
+                    ? parseInt(match[3], 10) / Math.pow(10, match[3].length)
+                    : 0;
+                trans.push({ time: minutes * 60 + seconds + fraction, text });
+            }
+        });
+        trans.sort((a, b) => a.time - b.time);
+        let j = 0;
+        for (const item of result) {
+            while (j < trans.length - 1 && trans[j].time < item.time - 0.4) {
+                j += 1;
+            }
+            if (j < trans.length && Math.abs(trans[j].time - item.time) <= 0.4) {
+                item.translation = trans[j].text;
+            }
+        }
+    }
     return result;
 }

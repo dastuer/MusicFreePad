@@ -10,6 +10,7 @@ public class MainActivity extends BridgeActivity {
         // 必须在 super.onCreate 之前注册：BridgeActivity.onCreate 里就会构建 bridge，
         // 之后再 registerPlugin 就加不进去了
         registerPlugin(MediaNotificationPlugin.class);
+        registerPlugin(StoragePlugin.class);
         super.onCreate(savedInstanceState);
     }
 }

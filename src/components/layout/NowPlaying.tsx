@@ -24,6 +24,7 @@ import {
     openSleepTimer,
     openSingleSelect,
     showToast,
+    lyricTranslationAtom,
 } from "@/core/uiAtoms";
 import { useBackLayer } from "@/core/systemBack";
 import { toggleLike, isLikedMusic, likesVersionAtom } from "@/core/musicSheet";
@@ -74,6 +75,7 @@ export default function NowPlaying() {
     const playingQuality = usePlayingQuality();
     const switchingQuality = useQualitySwitching();
     const lyric = useAtomValue(currentLyricAtom);
+    const showTranslation = useAtomValue(lyricTranslationAtom);
     const likesVersion = useAtomValue(likesVersionAtom);
     const setQueueOpen = useSetAtom(queueOpenAtom);
     const [liked, setLiked] = useState<boolean | null>(null);
@@ -371,6 +373,9 @@ export default function NowPlaying() {
                                         }}
                                     >
                                         {line.lrc || "···"}
+                                        {showTranslation && line.translation && (
+                                            <div className="np-lyric-trans">{line.translation}</div>
+                                        )}
                                     </div>
                                 ))
                             ) : (
