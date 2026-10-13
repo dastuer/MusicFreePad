@@ -10,7 +10,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         // 必须在 super.onCreate 之前注册：BridgeActivity.onCreate 里就会构建 bridge，
         // 之后再 registerPlugin 就加不进去了
-        registerPlugin(MediaNotificationPlugin.class);
+        registerPlugin(PlaybackBridge.class);
         registerPlugin(StoragePlugin.class);
         registerPlugin(LocalMusicPlugin.class);
         registerPlugin(DavHttpPlugin.class);

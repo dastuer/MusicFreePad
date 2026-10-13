@@ -35,6 +35,10 @@ dependencies {
     implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
     // 播放通知：MediaSessionCompat + MediaStyle（下拉栏媒体卡片）
     implementation "androidx.media:media:1.7.0"
+    // 原生播放内核：Media3 MediaSessionService 托管 ExoPlayer（后台连播 + 媒体通知）
+    implementation "androidx.media3:media3-exoplayer:1.8.0"
+    implementation "androidx.media3:media3-datasource-okhttp:1.8.0"
+    implementation "androidx.media3:media3-session:1.8.0"
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     // WebDAV 备份：DavHttpPlugin 用它发 PROPFIND / MKCOL（CapacitorHttp 底层
