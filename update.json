@@ -1,8 +1,8 @@
 {
-  "versionCode": 1,
-  "versionName": "1.0.0",
-  "changelog": "首个发布版本",
-  "apkUrl": "https://gitee.com/huaihui/MusicFreePad/releases/download/v1.0.0/MusicFreePad-1.0.0.apk",
-  "publishedAt": "2026-10-28",
+  "versionCode": 2,
+  "versionName": "1.0.1",
+  "changelog": "- 新增音效功能：十段均衡器（24 套内置曲线 + 我的音效）、低音/高音增强、环绕深度与强度、十档环境音效（混响），参数与桌面版互通\n- 音效入口在播放页「更多」菜单；Android 上经原生 audiofx 效果链生效，iOS/浏览器走 Web Audio\n- 新增应用内自动更新：debug 渠道与正式渠道隔离（包名 .debug 后缀、独立清单），启动静默检查 + 设置页手动检查，下载带进度与断点续传\n- 正式版启用正式签名",
+  "apkUrl": "https://gitee.com/huaihui/MusicFreePad/releases/download/v1.0.1/MusicFreePad-1.0.1.apk",
+  "publishedAt": "2026-10-27",
   "packageName": "com.huah.musicfree.pad"
 }
