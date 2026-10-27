@@ -55,6 +55,8 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- 本地音乐扫描：读取媒体音频文件（Android 13+ 细分权限 / 旧系统存储权限） -->
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <!-- 检查更新：读安装授权状态（canRequestPackageInstalls）+ 拉起系统安装器 -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />

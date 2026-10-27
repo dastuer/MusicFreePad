@@ -14,6 +14,8 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(StoragePlugin.class);
         registerPlugin(LocalMusicPlugin.class);
         registerPlugin(DavHttpPlugin.class);
+        // 检查更新：读安装包版本 / 算更新包路径 / 拉起系统安装器（见 UpdatePlugin）
+        registerPlugin(UpdatePlugin.class);
         super.onCreate(savedInstanceState);
     }
 

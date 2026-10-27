@@ -1,0 +1,8 @@
+{
+  "versionCode": 1,
+  "versionName": "1.0.0-debug",
+  "changelog": "首个 debug 渠道版本",
+  "apkUrl": "https://gitee.com/huaihui/MusicFreePad/releases/download/v1.0.0/MusicFreePad-1.0.0-debug.apk",
+  "publishedAt": "2026-10-28",
+  "packageName": "com.huah.musicfree.pad.debug"
+}

@@ -57,6 +57,7 @@ import {
 } from "@/core/dav";
 import { isNative } from "@/core/native";
 import { navigate } from "@/core/router";
+import { manualCheckForUpdate, getLocalVersion, getUpdateChannel, type ILocalVersion, type UpdateChannel } from "@/core/appUpdate";
 import { downloadSaveTargetLabel } from "@/core/musicDownload";
 import {
     isAndroidNative,
@@ -117,6 +118,21 @@ export default function SettingsPage() {
     useEffect(() => {
         getBackupCounts().then(setCounts);
     }, [busy]);
+
+    // 检查更新：本机版本与渠道（原生下读 PackageInfo；浏览器里拿不到真实包版本）
+    const [localVersion, setLocalVersion] = useState<ILocalVersion | null>(null);
+    const [channel, setChannel] = useState<UpdateChannel>("stable");
+    useEffect(() => {
+        if (!native) {
+            return;
+        }
+        void getLocalVersion().then(setLocalVersion).catch(() => undefined);
+        void getUpdateChannel().then(setChannel).catch(() => undefined);
+    }, [native]);
+
+    const onCheckUpdate = () => {
+        void manualCheckForUpdate();
+    };
 
     const applyRestored = (summaryText: string) => {
         showToast(summaryText, 4500);
@@ -616,9 +632,20 @@ export default function SettingsPage() {
                 <div className="settings-row">
                     <div className="settings-label">MusicFree Pad</div>
                     <div className="settings-label-sub">
-                        {`v${__APP_VERSION__} · 插件与数据兼容 MusicFreeDesktop · 原生应用基于`}
+                        {`v${localVersion?.versionName ?? __APP_VERSION__}`}
+                        {channel === "debug" ? "（debug 渠道）" : ""}
+                        {" · 插件与数据兼容 MusicFreeDesktop · 原生应用基于"}
                         {native ? " Capacitor" : " Capacitor（可打包 Android / iOS）"}
                     </div>
+                </div>
+                <div className="settings-row clickable" onClick={onCheckUpdate}>
+                    <div className="settings-label">检查更新</div>
+                    <div className="settings-label-sub">
+                        {native
+                            ? "有新版本时弹窗提示，可直接下载安装"
+                            : "请在 Android 应用内检查更新"}
+                    </div>
+                    <span className="settings-row-arrow">›</span>
                 </div>
             </section>
         </div>

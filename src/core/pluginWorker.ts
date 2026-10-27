@@ -18,8 +18,8 @@ import qs from "qs";
 import he from "he";
 import { satisfies, compare } from "compare-versions";
 
-/** satisfies 版本检查用的基准版本（与桌面端同机制，数值对齐桌面端 1.0.0） */
-const APP_VERSION = "1.0.0";
+/** satisfies 版本检查用的基准版本：与 package.json 版本号联动（vite define 注入） */
+const APP_VERSION: string = __APP_VERSION__;
 
 const sha256 = (s: string) => CryptoJs.SHA256(s).toString();
 

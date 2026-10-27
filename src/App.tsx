@@ -6,6 +6,8 @@ import { resumeSavedMatchTask } from "@/core/localMusic";
 import { pluginHost } from "@/core/ipc";
 import { useThemeSetup } from "@/core/theme";
 import { ensureLikesSheet } from "@/core/musicSheet";
+import { isNative } from "@/core/native";
+import { silentCheckForUpdate } from "@/core/appUpdate";
 import Sidebar from "@/components/layout/Sidebar";
 import TopBar from "@/components/layout/TopBar";
 import PlayerBar from "@/components/layout/PlayerBar";
@@ -16,6 +18,8 @@ import MusicActionSheet from "@/components/base/MusicActionSheet";
 import AddToSheetPanel from "@/components/base/AddToSheetPanel";
 import SleepTimerSheet from "@/components/base/SleepTimerSheet";
 import SingleSelectSheet from "@/components/base/SingleSelectSheet";
+import AudioEffectPanel from "@/components/base/AudioEffectPanel";
+import UpdateSheet from "@/components/base/UpdateSheet";
 import PromptDialog from "@/components/base/PromptDialog";
 import HomePage from "@/pages/home";
 import SearchPage from "@/pages/search";
@@ -91,6 +95,14 @@ export default function App() {
         void resumeSavedMatchTask().catch((e: any) =>
             console.warn("[app] 恢复本地匹配任务失败", e),
         );
+        // 检查更新（仅原生环境）：延后 4 秒避开冷启动的解析/播放初始化高峰，
+        // 失败静默，有新版才弹面板
+        if (isNative()) {
+            const updateTimer = setTimeout(() => {
+                void silentCheckForUpdate();
+            }, 4000);
+            return () => clearTimeout(updateTimer);
+        }
     }, []);
 
     return (
@@ -111,6 +123,8 @@ export default function App() {
             <AddToSheetPanel />
             <SleepTimerSheet />
             <SingleSelectSheet />
+            <AudioEffectPanel />
+            <UpdateSheet />
             <PromptDialog />
             <ToastHost />
         </div>

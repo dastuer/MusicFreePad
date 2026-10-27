@@ -34,3 +34,6 @@ nohup.out
 .idea/
 .vscode/
 *.log
+
+# 发版脚本读取的签名配置（含密码，不入库）
+android/keystore.properties
