@@ -250,6 +250,20 @@ public class MediaPlaybackService extends MediaSessionService {
             .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
             .build();
         p.setAudioAttributes(attrs, focusEnabled);
+        // 显式指定音频会话：音效引擎（android.media.audiofx）挂会话用。
+        // 不指定的话会话由音频汇懒生成，效果器没有确定的挂载点。
+        try {
+            android.media.AudioManager am =
+                (android.media.AudioManager) getSystemService(Context.AUDIO_SERVICE);
+            int sessionId = am.generateAudioSessionId();
+            if (sessionId != android.media.AudioManager.ERROR) {
+                p.setAudioSessionId(sessionId);
+            }
+        } catch (Exception e) {
+            android.util.Log.w("AudioEffect", "音频会话生成失败，音效不可用", e);
+        }
+        // 服务重建（进程被杀后重启）：把最近一次音效设置重挂到新会话
+        AudioEffectEngine.apply(p, AudioEffectEngine.getLastJson());
         return p;
     }
 
@@ -272,6 +286,7 @@ public class MediaPlaybackService extends MediaSessionService {
         if (PlaybackBridge.activeService == this) {
             PlaybackBridge.activeService = null;
         }
+        AudioEffectEngine.release();
         if (mediaSession != null) {
             mediaSession.release();
             mediaSession = null;
@@ -467,6 +482,14 @@ public class MediaPlaybackService extends MediaSessionService {
                 player.setAudioAttributes(attrs, focusEnabled);
             }
         });
+    }
+
+    /**
+     * 音效设置整体下发（JSON 由 PlaybackBridge 原样透传）：
+     * 全部落在主线程操作 ExoPlayer 会话上的效果器（AudioEffectEngine）。
+     */
+    void setAudioEffect(String json) {
+        runOnMain(() -> AudioEffectEngine.apply(player, json));
     }
 
     // ---------- 状态查询（PlaybackBridge.getState 用，须在主线程调） ----------

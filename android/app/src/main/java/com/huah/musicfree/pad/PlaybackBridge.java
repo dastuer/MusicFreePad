@@ -238,6 +238,23 @@ public class PlaybackBridge extends Plugin {
         call.resolve();
     }
 
+    /**
+     * 音效设置整体下发（音效面板每次变更全量推送一份）：
+     * { enabled, eqs:[10], bass, treble, surround, reverb }。
+     * JSObject 即 JSONObject，toString 原样序列化后透传给服务侧引擎，
+     * 频段映射等所有音频处理都在 AudioEffectEngine 里做。
+     */
+    @PluginMethod
+    public void setAudioEffect(PluginCall call) {
+        MediaPlaybackService svc = activeService;
+        if (svc == null) {
+            call.reject("service unavailable");
+            return;
+        }
+        svc.setAudioEffect(call.getData().toString());
+        call.resolve();
+    }
+
     /** 播放器真实状态快照（回前台对账用）。ExoPlayer 只许主线程访问：统一切主线程再读。 */
     @PluginMethod
     public void getState(PluginCall call) {

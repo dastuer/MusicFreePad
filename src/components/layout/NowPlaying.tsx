@@ -23,6 +23,7 @@ import {
     queueOpenAtom,
     openMusicActions,
     openAddToSheet,
+    openAudioEffect,
     openSleepTimer,
     openSingleSelect,
     showToast,
@@ -342,6 +343,7 @@ export default function NowPlaying() {
         if (currentMusic.platform !== "local") {
             actions.push({ label: "下载", onClick: openDownloadSheet });
         }
+        actions.push({ label: "音效", onClick: openAudioEffect });
         actions.push({ label: "倍速播放", onClick: openRateSheet });
         actions.push({ label: "定时关闭", onClick: openSleepTimer });
         openMusicActions({ musicItem: currentMusic, actions });

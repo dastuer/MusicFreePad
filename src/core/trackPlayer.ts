@@ -17,6 +17,11 @@ import {
     IQueueWindowItem,
     NativeAudioElement,
 } from "./nativeAudio";
+import {
+    notifyAudioBackendChanged,
+    registerMediaElement,
+    unregisterMediaElement,
+} from "./audioEffect";
 
 export type MusicState = "playing" | "paused" | "stopped" | "loading";
 export type MusicRepeatMode = "off" | "queue" | "single";
@@ -460,6 +465,7 @@ class TrackPlayer extends EventEmitter {
         audio.volume = getStoredVolume();
         this.attachAudioListeners(audio);
         this.audio = audio;
+        registerMediaElement(audio);
         applyCoPlaySessionType();
         void createAudioElement().then((backend) => {
             if (this.audio !== audio) {
@@ -475,6 +481,9 @@ class TrackPlayer extends EventEmitter {
             backend.volume = getStoredVolume();
             this.attachAudioListeners(backend);
             this.audio = backend;
+            registerMediaElement(backend);
+            // 原生后端刚就绪：把已保存的音效设置补推给 ExoPlayer（服务可能刚重建）
+            notifyAudioBackendChanged();
             this.destroyAudioElement(previous);
             this.syncLoopFlag();
             this.applyNativeFocusMode();
@@ -693,6 +702,8 @@ class TrackPlayer extends EventEmitter {
     /** 彻底弃用一个播放器实例：摘掉监听，免得它的 pause/error 事件回头改状态 */
     private destroyAudioElement(audio: AudioBackend) {
         this.detachAudioListeners(audio);
+        // 音效总线的元素登记一并解除（Web Audio 路径；原生代理不是媒体元素，内部自动跳过）
+        unregisterMediaElement(audio);
         destroyAudioBackend(audio);
     }
 
@@ -1394,6 +1405,7 @@ class TrackPlayer extends EventEmitter {
             const probe: AudioBackend = new Audio();
             probe.preload = "auto";
             preload.probe = probe;
+            registerMediaElement(probe);
             probe.src = playSrc;
             this.monitorPreloadProbe(probe, seq, preload);
         } finally {
@@ -2655,6 +2667,7 @@ class TrackPlayer extends EventEmitter {
             probe.preload = "auto";
             probe.playbackRate = this._rate;
             this.probeAudio = probe;
+            registerMediaElement(probe);
             let probeSrc = resolved.src;
             if (!musicItem.localPath) {
                 // 目标音质命中缓存则从本地交接（切换近乎瞬时）；未命中顺路缓存该音质

@@ -107,6 +107,35 @@ export function closeSleepTimer() {
     getDefaultStore().set(sleepTimerOpenAtom, false);
 }
 
+/** ---------- 音效面板（播放页更多菜单入口） ---------- */
+
+export const audioEffectOpenAtom = atom(false);
+
+export function openAudioEffect() {
+    getDefaultStore().set(audioEffectOpenAtom, true);
+}
+
+export function closeAudioEffect() {
+    getDefaultStore().set(audioEffectOpenAtom, false);
+}
+
+/** ---------- 检查更新面板 ---------- */
+
+export interface IUpdateSheetState {
+    manifest: import("./appUpdate").IUpdateManifest;
+    local: import("./appUpdate").ILocalVersion;
+}
+
+export const updateSheetAtom = atomWithReset<IUpdateSheetState | null>(null);
+
+export function openUpdateSheet(state: IUpdateSheetState) {
+    getDefaultStore().set(updateSheetAtom, state);
+}
+
+export function closeUpdateSheet() {
+    getDefaultStore().set(updateSheetAtom, null);
+}
+
 /** ---------- 歌词翻译显示（播放页双行渲染，设置页开关） ---------- */
 
 export const lyricTranslationAtom = atom(
